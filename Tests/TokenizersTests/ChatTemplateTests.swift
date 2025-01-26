@@ -80,5 +80,66 @@ class ChatTemplateTests: XCTestCase {
         XCTAssertEqual(decoded, decodedTarget)
     }
 
-    // TODO: Add tests for tool use template
+    // This test fails because of Swift's non-deterministic key order in dictionaries. We're already testing tool use templates in Swift Jinja.
+
+//    func testQwen2_5WithTools() async throws {
+//        let tokenizer = try await AutoTokenizer.from(pretrained: "mlx-community/Qwen2.5-7B-Instruct-4bit")
+//
+//        let weatherQueryMessages: [[String: String]] = [
+//            [
+//                "role": "user",
+//                "content": "What is the weather in Paris today?",
+//            ]
+//        ]
+//
+//        let getCurrentWeatherToolSpec: [String: Any] = [
+//            "type": "function",
+//            "function": [
+//                "name": "get_current_weather",
+//                "description": "Get the current weather in a given location",
+//                "parameters": [
+//                    "type": "object",
+//                    "properties": [
+//                        "location": [
+//                            "type": "string",
+//                            "description": "The city and state, e.g. San Francisco, CA"
+//                        ],
+//                        "unit": [
+//                            "type": "string",
+//                            "enum": ["celsius", "fahrenheit"]
+//                        ]
+//                    ],
+//                    "required": ["location"]
+//                ]
+//            ]
+//        ]
+//
+//        let encoded = try tokenizer.applyChatTemplate(messages: weatherQueryMessages, tools: [getCurrentWeatherToolSpec])
+//        let decoded = tokenizer.decode(tokens: encoded)
+//
+//        let target = """
+//<|im_start|>system
+//You are Qwen, created by Alibaba Cloud. You are a helpful assistant.
+//
+//# Tools
+//
+//You may call one or more functions to assist with the user query.
+//
+//You are provided with function signatures within <tools></tools> XML tags:
+//<tools>
+//{"type": "function", "function": {"name": "get_current_weather", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "The city and state, e.g. San Francisco, CA"}, "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}}}, "description": "Get the current weather in a given location"}}
+//</tools>
+//
+//For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
+//<tool_call>
+//{"name": <function-name>, "arguments": <args-json-object>}
+//</tool_call><|im_end|>
+//<|im_start|>user
+//What is the weather in Paris today?<|im_end|>
+//<|im_start|>assistant
+//
+//"""
+//
+//        XCTAssertEqual(decoded, target)
+//    }
 }
