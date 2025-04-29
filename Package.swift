@@ -13,7 +13,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", .upToNextMinor(from: "1.4.0")),
-        .package(url: "https://github.com/johnmai-dev/Jinja", .upToNextMinor(from: "1.1.0")),
+        .package(url: "https://github.com/DePasqualeOrg/Jinja", branch: "qwen-3"),
     ],
     targets: [
         .executableTarget(
