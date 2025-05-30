@@ -202,10 +202,12 @@ public class LanguageModelConfigurationFromHub {
             
             if FileManager.default.fileExists(atPath: chatTemplateJinjaURL.path) {
                 // Try to load .jinja template as plain text
+              print("::: Using .jinja template")
                 chatTemplate = try? String(contentsOf: chatTemplateJinjaURL, encoding: .utf8)
             } else if FileManager.default.fileExists(atPath: chatTemplateJsonURL.path),
                       let chatTemplateConfig = try? hubApi.configuration(fileURL: chatTemplateJsonURL) {
                 // Fall back to .json template
+              print("::: Using .json template")
                 chatTemplate = chatTemplateConfig.chatTemplate.string()
             }
             
@@ -214,6 +216,7 @@ public class LanguageModelConfigurationFromHub {
                 if var configDict = tokenizerConfig?.dictionary() {
                     configDict["chat_template"] = .init(chatTemplate)
                     tokenizerConfig = Config(configDict)
+                  print("::: Using chat template from tokenizer_config.json")
                 } else {
                     tokenizerConfig = Config(["chat_template": chatTemplate])
                 }
