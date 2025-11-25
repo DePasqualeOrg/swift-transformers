@@ -17,7 +17,7 @@ let package = Package(
         .library(name: "Transformers", targets: ["Tokenizers", "Generation", "Models"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/huggingface/swift-jinja.git", from: "2.0.0")
+        .package(url: "https://github.com/DePasqualeOrg/swift-jinja.git", branch: "test-jinjaerror")
     ],
     targets: [
         .target(name: "Generation", dependencies: ["Tokenizers"]),
