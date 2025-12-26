@@ -193,13 +193,17 @@ public extension HubApi {
     struct Sibling: Codable {
         /// The relative filename within the repository.
         let rfilename: String
+        /// The size of the file in bytes (optional, may not be present for all files).
+        let size: Int64?
     }
 
-    /// Response structure for repository file listings.
+    /// Response structure for repository info including file listings.
     ///
-    /// Contains the list of files available in a repository,
+    /// Contains the commit hash and list of files available in a repository,
     /// returned by the Hub API when querying repository contents.
-    struct SiblingsResponse: Codable {
+    struct RepoInfoResponse: Codable {
+        /// The commit hash (SHA) for this revision.
+        let sha: String
         /// Array of files in the repository.
         let siblings: [Sibling]
     }
@@ -278,23 +282,42 @@ public extension HubApi {
     /// - Returns: Array of matching filenames
     /// - Throws: HubClientError if the repository cannot be accessed or parsed
     func getFilenames(from repo: Repo, revision: String = "main", matching globs: [String] = []) async throws -> [String] {
-        // Read repo info and only parse "siblings"
-        let url = URL(string: endpoint)!
+        let (files, _) = try await getRepoInfo(from: repo, revision: revision, matching: globs)
+        return files.map { $0.filename }
+    }
+
+    /// File info returned from getRepoInfo, containing filename and optional size.
+    struct RepoFileInfo {
+        let filename: String
+        let size: Int64?
+    }
+
+    /// Retrieves repository info including filenames, sizes, and commit hash.
+    ///
+    /// - Parameters:
+    ///   - repo: The repository to query
+    ///   - revision: Git revision (branch, tag, or commit hash)
+    ///   - globs: Optional glob patterns to filter files
+    /// - Returns: Tuple of (matching file info, commit SHA)
+    /// - Throws: HubClientError if the repository cannot be accessed or parsed
+    func getRepoInfo(from repo: Repo, revision: String = "main", matching globs: [String] = []) async throws -> (files: [RepoFileInfo], sha: String) {
+        var url = URL(string: endpoint)!
             .appending(path: "api")
             .appending(path: repo.type.rawValue)
             .appending(path: repo.id)
             .appending(path: "revision")
             .appending(component: revision) // Encode slashes (e.g., "pr/1" -> "pr%2F1")
+        // blobs=true includes file sizes in the response, used for size-weighted progress reporting
+        url.append(queryItems: [URLQueryItem(name: "blobs", value: "true")])
         let (data, _) = try await httpGet(for: url)
-        let response = try JSONDecoder().decode(SiblingsResponse.self, from: data)
-        let filenames = response.siblings.map { $0.rfilename }
-        guard globs.count > 0 else { return filenames }
+        let response = try JSONDecoder().decode(RepoInfoResponse.self, from: data)
+        let allFiles = response.siblings.map { RepoFileInfo(filename: $0.rfilename, size: $0.size) }
 
-        var selected: Set<String> = []
-        for glob in globs {
-            selected = selected.union(filenames.matching(glob: glob))
-        }
-        return Array(selected)
+        guard globs.count > 0 else { return (allFiles, response.sha) }
+
+        let matchingFilenames = Set(allFiles.map { $0.filename }.matching(globs: globs))
+        let matchingFiles = allFiles.filter { matchingFilenames.contains($0.filename) }
+        return (matchingFiles, response.sha)
     }
 
     func getFilenames(from repoId: String, matching globs: [String] = []) async throws -> [String] {
@@ -530,12 +553,25 @@ public extension HubApi {
         }
 
         /// Downloads the file with progress tracking.
-        /// - Parameter progressHandler: Called with download progress (0.0-1.0) and speed in bytes/sec, if available.
+        /// - Parameters:
+        ///   - knownCommitHash: If provided and matches local metadata, skips the HEAD request for faster cache hits.
+        ///   - progressHandler: Called with download progress (0.0-1.0) and speed in bytes/sec, if available.
         /// - Returns: Local file URL (uses cached file if commit hash matches).
         /// - Throws: ``EnvironmentError`` errors for file and metadata validation failures, ``Downloader.DownloadError`` errors during transfer, or ``CancellationError`` if the task is cancelled.
         @discardableResult
-        func download(progressHandler: @escaping (Double, Double?) -> Void) async throws -> URL {
+        func download(knownCommitHash: String? = nil, progressHandler: @escaping (Double, Double?) -> Void) async throws -> URL {
             let localMetadata = try hub.readDownloadMetadata(metadataPath: metadataDestination)
+
+            // Fast path: if we know the repo's commit hash and local file matches, skip HEAD request
+            if let knownCommitHash,
+                hub.isValidHash(hash: knownCommitHash, pattern: hub.commitHashPattern),
+                downloaded,
+                let localMetadata,
+                localMetadata.commitHash == knownCommitHash
+            {
+                return destination
+            }
+
             let remoteMetadata = try await hub.getFileMetadata(url: source)
 
             let localCommitHash = localMetadata?.commitHash ?? ""
@@ -622,7 +658,7 @@ public extension HubApi {
     }
 
     @discardableResult
-    func snapshot(from repo: Repo, revision: String = "main", matching globs: [String] = [], progressHandler: @escaping (Progress) -> Void = { _ in })
+    func snapshot(from repo: Repo, revision: String = "main", matching globs: [String] = [], maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress) -> Void = { _ in })
         async throws -> URL
     {
         let repoDestination = localRepoLocation(repo)
@@ -664,78 +700,117 @@ public extension HubApi {
             return repoDestination
         }
 
-        let filenames = try await getFilenames(from: repo, revision: revision, matching: globs)
-        let progress = Progress(totalUnitCount: Int64(filenames.count))
-        for filename in filenames {
-            let fileProgress = Progress(totalUnitCount: 100, parent: progress, pendingUnitCount: 1)
-            let downloader = HubFileDownloader(
-                hub: self,
-                repo: repo,
-                revision: revision,
-                repoDestination: repoDestination,
-                repoMetadataDestination: repoMetadataDestination,
-                relativeFilename: filename,
-                hfToken: hfToken,
-                endpoint: endpoint,
-                backgroundSession: useBackgroundSession
-            )
+        let (files, repoCommitHash) = try await getRepoInfo(from: repo, revision: revision, matching: globs)
 
-            try await downloader.download { fractionDownloaded, speed in
-                fileProgress.completedUnitCount = Int64(100 * fractionDownloaded)
-                if let speed {
-                    fileProgress.setUserInfoObject(speed, forKey: .throughputKey)
-                    progress.setUserInfoObject(speed, forKey: .throughputKey)
+        // Size-weighted progress: total is sum of file sizes (bytes)
+        let totalBytes = files.reduce(Int64(0)) { $0 + ($1.size ?? 1) }
+        let totalProgress = Progress(totalUnitCount: totalBytes)
+        let startTime = CFAbsoluteTimeGetCurrent()
+        progressHandler(totalProgress)
+
+        // Process files in parallel with limited concurrency
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            var nextIndex = 0
+
+            // Helper to add a download task for a file
+            func addDownloadTask(for file: RepoFileInfo) {
+                // Create child progress weighted by file size (using bytes as units throughout)
+                let fileSize = file.size ?? 1
+                let fileProgress = Progress(totalUnitCount: fileSize, parent: totalProgress, pendingUnitCount: fileSize)
+
+                let hub = self
+                let relativeFilename = file.filename
+                group.addTask {
+                    let downloader = HubFileDownloader(
+                        hub: hub,
+                        repo: repo,
+                        revision: revision,
+                        repoDestination: repoDestination,
+                        repoMetadataDestination: repoMetadataDestination,
+                        relativeFilename: relativeFilename,
+                        hfToken: hfToken,
+                        endpoint: endpoint,
+                        backgroundSession: useBackgroundSession
+                    )
+                    try await downloader.download(knownCommitHash: repoCommitHash) { fractionDownloaded, _ in
+                        let bytesDownloaded = Int64(Double(fileSize) * fractionDownloaded)
+                        // Only update if progress increased (handles out-of-order updates)
+                        if bytesDownloaded > fileProgress.completedUnitCount {
+                            fileProgress.completedUnitCount = bytesDownloaded
+                        }
+                        // Aggregate speed: total bytes downloaded / elapsed time
+                        let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                        if elapsed > 0 {
+                            let aggregateSpeed = Double(totalProgress.completedUnitCount) / elapsed
+                            totalProgress.setUserInfoObject(aggregateSpeed, forKey: .throughputKey)
+                        }
+                        progressHandler(totalProgress)
+                    }
+                    fileProgress.completedUnitCount = fileSize
+                    progressHandler(totalProgress)
                 }
-                progressHandler(progress)
-            }
-            if Task.isCancelled {
-                return repoDestination
             }
 
-            fileProgress.completedUnitCount = 100
+            // Start initial batch of tasks
+            while nextIndex < min(maxConcurrent, files.count) {
+                addDownloadTask(for: files[nextIndex])
+                nextIndex += 1
+            }
+
+            // Process completions and add new tasks as slots open up
+            for try await _ in group {
+                if nextIndex < files.count, !Task.isCancelled {
+                    addDownloadTask(for: files[nextIndex])
+                    nextIndex += 1
+                }
+            }
         }
 
-        progressHandler(progress)
+        // Final progress update to ensure 100% is reported
+        progressHandler(totalProgress)
         return repoDestination
     }
 
-    /// New overloads exposing speed directly in the snapshot progress handler
-    @discardableResult func snapshot(from repo: Repo, revision: String = "main", matching globs: [String] = [], progressHandler: @escaping (Progress, Double?) -> Void) async throws -> URL {
-        try await snapshot(from: repo, revision: revision, matching: globs) { progress in
+    /// Snapshot download with aggregate speed reporting.
+    ///
+    /// The speed (in bytes/sec) is the aggregate throughput across all concurrent downloads,
+    /// calculated as total bytes downloaded divided by elapsed time.
+    @discardableResult func snapshot(from repo: Repo, revision: String = "main", matching globs: [String] = [], maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress, Double?) -> Void) async throws -> URL {
+        try await snapshot(from: repo, revision: revision, matching: globs, maxConcurrent: maxConcurrent) { progress in
             let speed = progress.userInfo[.throughputKey] as? Double
             progressHandler(progress, speed)
         }
     }
 
     @discardableResult
-    func snapshot(from repoId: String, revision: String = "main", matching globs: [String] = [], progressHandler: @escaping (Progress) -> Void = { _ in }) async throws -> URL {
-        try await snapshot(from: Repo(id: repoId), revision: revision, matching: globs, progressHandler: progressHandler)
+    func snapshot(from repoId: String, revision: String = "main", matching globs: [String] = [], maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress) -> Void = { _ in }) async throws -> URL {
+        try await snapshot(from: Repo(id: repoId), revision: revision, matching: globs, maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 
     @discardableResult
-    func snapshot(from repo: Repo, revision: String = "main", matching glob: String, progressHandler: @escaping (Progress) -> Void = { _ in }) async throws -> URL {
-        try await snapshot(from: repo, revision: revision, matching: [glob], progressHandler: progressHandler)
+    func snapshot(from repo: Repo, revision: String = "main", matching glob: String, maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress) -> Void = { _ in }) async throws -> URL {
+        try await snapshot(from: repo, revision: revision, matching: [glob], maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 
     @discardableResult
-    func snapshot(from repoId: String, revision: String = "main", matching glob: String, progressHandler: @escaping (Progress) -> Void = { _ in }) async throws -> URL {
-        try await snapshot(from: Repo(id: repoId), revision: revision, matching: [glob], progressHandler: progressHandler)
+    func snapshot(from repoId: String, revision: String = "main", matching glob: String, maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress) -> Void = { _ in }) async throws -> URL {
+        try await snapshot(from: Repo(id: repoId), revision: revision, matching: [glob], maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 
     /// Convenience overloads for other snapshot entry points with speed
     @discardableResult
-    func snapshot(from repoId: String, revision: String = "main", matching globs: [String] = [], progressHandler: @escaping (Progress, Double?) -> Void) async throws -> URL {
-        try await snapshot(from: Repo(id: repoId), revision: revision, matching: globs, progressHandler: progressHandler)
+    func snapshot(from repoId: String, revision: String = "main", matching globs: [String] = [], maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress, Double?) -> Void) async throws -> URL {
+        try await snapshot(from: Repo(id: repoId), revision: revision, matching: globs, maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 
     @discardableResult
-    func snapshot(from repo: Repo, revision: String = "main", matching glob: String, progressHandler: @escaping (Progress, Double?) -> Void) async throws -> URL {
-        try await snapshot(from: repo, revision: revision, matching: [glob], progressHandler: progressHandler)
+    func snapshot(from repo: Repo, revision: String = "main", matching glob: String, maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress, Double?) -> Void) async throws -> URL {
+        try await snapshot(from: repo, revision: revision, matching: [glob], maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 
     @discardableResult
-    func snapshot(from repoId: String, revision: String = "main", matching glob: String, progressHandler: @escaping (Progress, Double?) -> Void) async throws -> URL {
-        try await snapshot(from: Repo(id: repoId), revision: revision, matching: [glob], progressHandler: progressHandler)
+    func snapshot(from repoId: String, revision: String = "main", matching glob: String, maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress, Double?) -> Void) async throws -> URL {
+        try await snapshot(from: Repo(id: repoId), revision: revision, matching: [glob], maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 }
 
@@ -977,42 +1052,43 @@ public extension Hub {
     /// - Parameters:
     ///   - repo: The repository to download
     ///   - globs: Array of glob patterns to filter files (defaults to all files)
+    ///   - maxConcurrent: Maximum number of concurrent downloads (default: 8)
     ///   - progressHandler: Closure called with download progress updates
     /// - Returns: URL to the local repository directory
     /// - Throws: HubClientError if the download fails
-    static func snapshot(from repo: Repo, matching globs: [String] = [], progressHandler: @escaping (Progress) -> Void = { _ in }) async throws -> URL {
-        try await HubApi.shared.snapshot(from: repo, matching: globs, progressHandler: progressHandler)
+    static func snapshot(from repo: Repo, matching globs: [String] = [], maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress) -> Void = { _ in }) async throws -> URL {
+        try await HubApi.shared.snapshot(from: repo, matching: globs, maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 
-    static func snapshot(from repoId: String, matching globs: [String] = [], progressHandler: @escaping (Progress) -> Void = { _ in }) async throws
+    static func snapshot(from repoId: String, matching globs: [String] = [], maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress) -> Void = { _ in }) async throws
         -> URL
     {
-        try await HubApi.shared.snapshot(from: Repo(id: repoId), matching: globs, progressHandler: progressHandler)
+        try await HubApi.shared.snapshot(from: Repo(id: repoId), matching: globs, maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 
-    static func snapshot(from repo: Repo, matching glob: String, progressHandler: @escaping (Progress) -> Void = { _ in }) async throws -> URL {
-        try await HubApi.shared.snapshot(from: repo, matching: glob, progressHandler: progressHandler)
+    static func snapshot(from repo: Repo, matching glob: String, maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress) -> Void = { _ in }) async throws -> URL {
+        try await HubApi.shared.snapshot(from: repo, matching: glob, maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 
-    static func snapshot(from repoId: String, matching glob: String, progressHandler: @escaping (Progress) -> Void = { _ in }) async throws -> URL {
-        try await HubApi.shared.snapshot(from: Repo(id: repoId), matching: glob, progressHandler: progressHandler)
+    static func snapshot(from repoId: String, matching glob: String, maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress) -> Void = { _ in }) async throws -> URL {
+        try await HubApi.shared.snapshot(from: Repo(id: repoId), matching: glob, maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 
-    /// Overloads exposing speed via (Progress, Double?) where Double is bytes/sec
-    static func snapshot(from repo: Repo, matching globs: [String] = [], progressHandler: @escaping (Progress, Double?) -> Void) async throws -> URL {
-        try await HubApi.shared.snapshot(from: repo, matching: globs, progressHandler: progressHandler)
+    /// Overloads with aggregate speed reporting (bytes/sec across all concurrent downloads).
+    static func snapshot(from repo: Repo, matching globs: [String] = [], maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress, Double?) -> Void) async throws -> URL {
+        try await HubApi.shared.snapshot(from: repo, matching: globs, maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 
-    static func snapshot(from repoId: String, matching globs: [String] = [], progressHandler: @escaping (Progress, Double?) -> Void) async throws -> URL {
-        try await HubApi.shared.snapshot(from: Repo(id: repoId), matching: globs, progressHandler: progressHandler)
+    static func snapshot(from repoId: String, matching globs: [String] = [], maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress, Double?) -> Void) async throws -> URL {
+        try await HubApi.shared.snapshot(from: Repo(id: repoId), matching: globs, maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 
-    static func snapshot(from repo: Repo, matching glob: String, progressHandler: @escaping (Progress, Double?) -> Void) async throws -> URL {
-        try await HubApi.shared.snapshot(from: repo, matching: glob, progressHandler: progressHandler)
+    static func snapshot(from repo: Repo, matching glob: String, maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress, Double?) -> Void) async throws -> URL {
+        try await HubApi.shared.snapshot(from: repo, matching: glob, maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 
-    static func snapshot(from repoId: String, matching glob: String, progressHandler: @escaping (Progress, Double?) -> Void) async throws -> URL {
-        try await HubApi.shared.snapshot(from: Repo(id: repoId), matching: glob, progressHandler: progressHandler)
+    static func snapshot(from repoId: String, matching glob: String, maxConcurrent: Int = 8, progressHandler: @escaping @Sendable (Progress, Double?) -> Void) async throws -> URL {
+        try await HubApi.shared.snapshot(from: Repo(id: repoId), matching: glob, maxConcurrent: maxConcurrent, progressHandler: progressHandler)
     }
 
     /// Retrieves user information using the provided authentication token.
@@ -1048,6 +1124,14 @@ public extension Hub {
 private extension [String] {
     func matching(glob: String) -> [String] {
         filter { fnmatch(glob, $0, 0) == 0 }
+    }
+
+    func matching(globs: [String]) -> [String] {
+        var selected: Set<String> = []
+        for glob in globs {
+            selected = selected.union(matching(glob: glob))
+        }
+        return Array(selected)
     }
 }
 
