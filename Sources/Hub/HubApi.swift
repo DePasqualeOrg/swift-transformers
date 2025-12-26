@@ -614,46 +614,58 @@ public extension HubApi {
                 }
             }
 
-            // Otherwise, let's download the file!
-            let incompleteDestination = repoMetadataDestination.appending(path: relativeFilename + ".\(remoteEtag).incomplete")
-            try prepareCacheDestination(incompleteDestination)
+            // Otherwise, download the file
+            // Use file lock to prevent concurrent downloads of the same file
+            let lock = FileLock(path: destination)
+            return try await lock.withLock {
+                // Re-check if file exists with valid metadata after acquiring lock
+                // (another process may have completed the download while we waited)
+                if downloaded, let updatedMetadata = try hub.readDownloadMetadata(metadataPath: metadataDestination),
+                    updatedMetadata.etag == remoteEtag
+                {
+                    return destination
+                }
 
-            let downloader = Downloader(to: destination, incompleteDestination: incompleteDestination, inBackground: backgroundSession)
+                let incompleteDestination = repoMetadataDestination.appending(path: relativeFilename + ".\(remoteEtag).incomplete")
+                try prepareCacheDestination(incompleteDestination)
 
-            try await withTaskCancellationHandler {
-                let sub = await downloader.download(from: source, using: hfToken, expectedSize: remoteSize)
-                listen: for await state in sub {
-                    switch state {
-                    case .notStarted:
-                        continue
-                    case let .downloading(progress, speed):
-                        progressHandler(progress, speed)
-                    case let .failed(error):
-                        throw error
-                    case .completed:
-                        break listen
+                let downloader = Downloader(to: destination, incompleteDestination: incompleteDestination, inBackground: backgroundSession)
+
+                try await withTaskCancellationHandler {
+                    let sub = await downloader.download(from: source, using: hfToken, expectedSize: remoteSize)
+                    listen: for await state in sub {
+                        switch state {
+                        case .notStarted:
+                            continue
+                        case let .downloading(progress, speed):
+                            progressHandler(progress, speed)
+                        case let .failed(error):
+                            throw error
+                        case .completed:
+                            break listen
+                        }
+                    }
+                } onCancel: {
+                    Task {
+                        await downloader.cancel()
                     }
                 }
-            } onCancel: {
-                Task {
-                    await downloader.cancel()
+
+                // Verify downloaded file integrity for LFS files (SHA256 etag)
+                if hub.isValidHash(hash: remoteEtag, pattern: hub.sha256Pattern) {
+                    let fileHash = try hub.computeFileHash(file: destination)
+                    if fileHash != remoteEtag {
+                        try? FileManager.default.removeItem(at: destination)
+                        throw EnvironmentError.fileIntegrityError(
+                            "Downloaded file hash mismatch for \(destination.lastPathComponent): expected \(remoteEtag), got \(fileHash)"
+                        )
+                    }
                 }
+
+                try hub.writeDownloadMetadata(commitHash: remoteCommitHash, etag: remoteEtag, metadataPath: metadataDestination)
+
+                return destination
             }
-
-            // Verify downloaded file integrity for LFS files (SHA256 etag)
-            if hub.isValidHash(hash: remoteEtag, pattern: hub.sha256Pattern) {
-                let fileHash = try hub.computeFileHash(file: destination)
-                if fileHash != remoteEtag {
-                    try? FileManager.default.removeItem(at: destination)
-                    throw EnvironmentError.fileIntegrityError(
-                        "Downloaded file hash mismatch for \(destination.lastPathComponent): expected \(remoteEtag), got \(fileHash)"
-                    )
-                }
-            }
-
-            try hub.writeDownloadMetadata(commitHash: remoteCommitHash, etag: remoteEtag, metadataPath: metadataDestination)
-
-            return destination
         }
     }
 

@@ -224,4 +224,17 @@ class HubTests: XCTestCase {
             XCTFail("Unexpected error type: \(error)")
         }
     }
+
+    // MARK: - FileLock Tests
+
+    func testFileLockCleansUp() throws {
+        let tempFile = FileManager.default.temporaryDirectory.appendingPathComponent("test-\(UUID())")
+        let lock = FileLock(path: tempFile)
+
+        try lock.withLockSync {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: lock.lockPath.path))
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: lock.lockPath.path))
+    }
 }
