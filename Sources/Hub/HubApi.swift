@@ -574,6 +574,17 @@ public extension HubApi {
                 }
             }
 
+            // Verify downloaded file integrity for LFS files (SHA256 etag)
+            if hub.isValidHash(hash: remoteEtag, pattern: hub.sha256Pattern) {
+                let fileHash = try hub.computeFileHash(file: destination)
+                if fileHash != remoteEtag {
+                    try? FileManager.default.removeItem(at: destination)
+                    throw EnvironmentError.fileIntegrityError(
+                        "Downloaded file hash mismatch for \(destination.lastPathComponent): expected \(remoteEtag), got \(fileHash)"
+                    )
+                }
+            }
+
             try hub.writeDownloadMetadata(commitHash: remoteCommitHash, etag: remoteEtag, metadataPath: metadataDestination)
 
             return destination
@@ -613,18 +624,11 @@ public extension HubApi {
 
                 let localMetadata = try readDownloadMetadata(metadataPath: metadataPath)
 
-                guard let localMetadata else {
+                guard localMetadata != nil else {
                     throw EnvironmentError.offlineModeError(String(localized: "Metadata not available for \(fileUrl.lastPathComponent)"))
                 }
-                let localEtag = localMetadata.etag
-
-                // LFS file so check file integrity
-                if isValidHash(hash: localEtag, pattern: sha256Pattern) {
-                    let fileHash = try computeFileHash(file: fileUrl)
-                    if fileHash != localEtag {
-                        throw EnvironmentError.fileIntegrityError(String(localized: "Hash mismatch for \(fileUrl.lastPathComponent)"))
-                    }
-                }
+                // Skip integrity check in offline mode - files were already verified during download.
+                // Re-hashing large LFS files (e.g., model weights) on every load is expensive (~200ms+).
             }
 
             return repoDestination
