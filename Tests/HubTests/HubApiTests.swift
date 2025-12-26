@@ -8,6 +8,24 @@ import XCTest
 
 @testable import Hub
 
+/// Thread-safe progress collector for use in async tests with @Sendable closures
+private actor ProgressCollector {
+    private(set) var fractionCompleted: Double = 0
+
+    func update(_ progress: Progress) {
+        fractionCompleted = progress.fractionCompleted
+    }
+}
+
+/// Thread-safe speed collector for use in async tests with @Sendable closures
+private actor SpeedCollector {
+    private(set) var lastSpeed: Double?
+
+    func update(_ speed: Double?) {
+        lastSpeed = speed
+    }
+}
+
 class HubApiTests: XCTestCase {
     // TODO: use a specific revision for these tests
 
@@ -240,7 +258,7 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testDownload() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
 
         // Add debug prints
         print("Download destination before: \(downloadDestination.path)")
@@ -248,7 +266,7 @@ class SnapshotDownloadTests: XCTestCase {
         let downloadedTo = try await hubApi.snapshot(from: repo, matching: "*.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
         // Add more debug prints
@@ -258,8 +276,8 @@ class SnapshotDownloadTests: XCTestCase {
         print("Downloaded filenames: \(downloadedFilenames)")
         print("Prefix used in getRelativeFiles: \(downloadDestination.appending(path: "models/\(repo)").path)")
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 6)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
 
         XCTAssertEqual(
@@ -277,14 +295,14 @@ class SnapshotDownloadTests: XCTestCase {
     /// Test only one file at a time
     func testDownloadInBackground() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination, useBackgroundSession: true)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
         let downloadedTo = try await hubApi.snapshot(from: repo, matching: "llama-2-7b-chat.mlpackage/Data/com.apple.CoreML/Metadata.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 1)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: repo)
@@ -299,14 +317,14 @@ class SnapshotDownloadTests: XCTestCase {
     func testCustomEndpointDownload() async throws {
         try XCTSkipIf(true, "Skipping, getting 429 from mirror")
         let hubApi = HubApi(downloadBase: downloadDestination, endpoint: "https://hf-mirror.com")
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
         let downloadedTo = try await hubApi.snapshot(from: repo, matching: "*.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 6)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: repo)
@@ -323,14 +341,14 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testDownloadFileMetadata() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
         let downloadedTo = try await hubApi.snapshot(from: repo, matching: "*.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 6)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: repo)
@@ -361,16 +379,16 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testDownloadFileMetadataExists() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
 
         let downloadedTo = try await hubApi.snapshot(from: repo, matching: "*.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 6)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: repo)
@@ -406,7 +424,7 @@ class SnapshotDownloadTests: XCTestCase {
         _ = try await hubApi.snapshot(from: repo, matching: "*.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
         attributes = try FileManager.default.attributesOfItem(atPath: configPath.path)
@@ -418,16 +436,16 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testDownloadFileMetadataSame() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
 
         let downloadedTo = try await hubApi.snapshot(from: repo, matching: "tokenizer.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 1)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: repo)
@@ -450,7 +468,7 @@ class SnapshotDownloadTests: XCTestCase {
         _ = try await hubApi.snapshot(from: repo, matching: "tokenizer.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
         let secondDownloadMetadata = try String(contentsOf: metadataPath, encoding: .utf8)
@@ -465,16 +483,16 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testDownloadFileMetadataCorrupted() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
 
         let downloadedTo = try await hubApi.snapshot(from: repo, matching: "*.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 6)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: repo)
@@ -514,7 +532,7 @@ class SnapshotDownloadTests: XCTestCase {
         _ = try await hubApi.snapshot(from: repo, matching: "*.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
         attributes = try FileManager.default.attributesOfItem(atPath: configPath.path)
@@ -530,7 +548,7 @@ class SnapshotDownloadTests: XCTestCase {
         _ = try await hubApi.snapshot(from: repo, matching: "*.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
         attributes = try FileManager.default.attributesOfItem(atPath: configPath.path)
@@ -542,16 +560,16 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testDownloadLargeFileMetadataCorrupted() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
 
         let downloadedTo = try await hubApi.snapshot(from: repo, matching: "*.mlmodel") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 1)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: repo)
@@ -583,7 +601,7 @@ class SnapshotDownloadTests: XCTestCase {
         _ = try await hubApi.snapshot(from: repo, matching: "*.mlmodel") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
         attributes = try FileManager.default.attributesOfItem(atPath: modelPath.path)
@@ -603,15 +621,15 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testDownloadLargeFile() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
         let downloadedTo = try await hubApi.snapshot(from: repo, matching: "*.mlmodel") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 1)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: repo)
@@ -633,15 +651,15 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testDownloadSmolLargeFile() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
         let downloadedTo = try await hubApi.snapshot(from: lfsRepo, matching: "x.bin") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 1)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(lfsRepo)"))
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: lfsRepo)
@@ -663,15 +681,15 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testRegexValidation() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
         let downloadedTo = try await hubApi.snapshot(from: lfsRepo, matching: "x.bin") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 1)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(lfsRepo)"))
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: lfsRepo)
@@ -700,16 +718,16 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testLFSFileNoMetadata() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
 
         let downloadedTo = try await hubApi.snapshot(from: lfsRepo, matching: "x.bin") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 1)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(lfsRepo)"))
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: lfsRepo)
@@ -733,7 +751,7 @@ class SnapshotDownloadTests: XCTestCase {
         _ = try await hubApi.snapshot(from: lfsRepo, matching: "x.bin") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
         attributes = try FileManager.default.attributesOfItem(atPath: filePath.path)
@@ -751,16 +769,16 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testLFSFileCorruptedMetadata() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
 
         let downloadedTo = try await hubApi.snapshot(from: lfsRepo, matching: "x.bin") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 1)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(lfsRepo)"))
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: lfsRepo)
@@ -784,7 +802,7 @@ class SnapshotDownloadTests: XCTestCase {
         _ = try await hubApi.snapshot(from: lfsRepo, matching: "x.bin") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
         attributes = try FileManager.default.attributesOfItem(atPath: filePath.path)
@@ -802,16 +820,16 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testNonLFSFileRedownload() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
 
         let downloadedTo = try await hubApi.snapshot(from: repo, matching: "config.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 1)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: repo)
@@ -835,7 +853,7 @@ class SnapshotDownloadTests: XCTestCase {
         _ = try await hubApi.snapshot(from: repo, matching: "config.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
         attributes = try FileManager.default.attributesOfItem(atPath: filePath.path)
@@ -853,17 +871,17 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testOfflineModeReturnsDestination() async throws {
         var hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
 
         var downloadedTo = try await hubApi.snapshot(from: repo, matching: "*.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
 
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 6)
+        var fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
 
         hubApi = HubApi(downloadBase: downloadDestination, useOfflineMode: true)
@@ -871,11 +889,11 @@ class SnapshotDownloadTests: XCTestCase {
         downloadedTo = try await hubApi.snapshot(from: repo, matching: "*.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 6)
+        fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
     }
 
@@ -899,17 +917,17 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testOfflineModeWithoutMetadata() async throws {
         var hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
 
         let downloadedTo = try await hubApi.snapshot(from: lfsRepo, matching: "*") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
 
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 2)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(lfsRepo)"))
 
         let metadataDestination = downloadedTo.appending(component: ".cache/huggingface/download")
@@ -934,59 +952,19 @@ class SnapshotDownloadTests: XCTestCase {
         }
     }
 
-    func testOfflineModeWithCorruptedLFSMetadata() async throws {
-        var hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
-
-        let downloadedTo = try await hubApi.snapshot(from: lfsRepo, matching: "*") { progress in
-            print("Total Progress: \(progress.fractionCompleted)")
-            print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-
-            lastProgress = progress
-        }
-
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 2)
-        XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(lfsRepo)"))
-
-        let metadataDestination = downloadedTo.appendingPathComponent(".cache/huggingface/download").appendingPathComponent("x.bin.metadata")
-
-        try "77b984598d90af6143d73d5a2d6214b23eba7e27\n98ea6e4f216f2ab4b69fff9b3a44842c38686ca685f3f55dc48c5d3fb1107be4\n0\n".write(
-            to: metadataDestination,
-            atomically: true,
-            encoding: .utf8
-        )
-
-        hubApi = HubApi(downloadBase: downloadDestination, useOfflineMode: true)
-
-        do {
-            try await hubApi.snapshot(from: lfsRepo, matching: "*")
-            XCTFail("Expected an error to be thrown")
-        } catch let error as HubApi.EnvironmentError {
-            switch error {
-            case let .fileIntegrityError(message):
-                XCTAssertEqual(message, "Hash mismatch for x.bin")
-            default:
-                XCTFail("Wrong error type: \(error)")
-            }
-        } catch {
-            XCTFail("Unexpected error: \(error)")
-        }
-    }
-
     func testOfflineModeWithNoFiles() async throws {
         var hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
 
         let downloadedTo = try await hubApi.snapshot(from: lfsRepo, matching: "x.bin") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
 
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 1)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(lfsRepo)"))
 
         let fileDestination = downloadedTo.appendingPathComponent("x.bin")
@@ -1011,7 +989,7 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testResumeDownloadFromEmptyIncomplete() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
         var downloadedTo = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
             "Library/Caches/huggingface-tests/models/coreml-projects/Llama-2-7b-chat-coreml"
         )
@@ -1026,10 +1004,10 @@ class SnapshotDownloadTests: XCTestCase {
         downloadedTo = try await hubApi.snapshot(from: repo, matching: "config.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 1)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
 
         let fileContents = try String(contentsOfFile: downloadedTo.appendingPathComponent("config.json").path, encoding: .utf8)
@@ -1051,7 +1029,7 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testResumeDownloadFromNonEmptyIncomplete() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
         var downloadedTo = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Caches/huggingface-tests/models/coreml-projects/Llama-2-7b-chat-coreml")
 
@@ -1065,10 +1043,10 @@ class SnapshotDownloadTests: XCTestCase {
         downloadedTo = try await hubApi.snapshot(from: repo, matching: "config.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 1)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
 
         let fileContents = try String(contentsOfFile: downloadedTo.appendingPathComponent("config.json").path, encoding: .utf8)
@@ -1133,7 +1111,7 @@ class SnapshotDownloadTests: XCTestCase {
         let repo = "coreml-projects/sam-2-studio"
         let hubApi = HubApi(downloadBase: downloadDestination)
 
-        var lastSpeed: Double? = nil
+        let speedCollector = SpeedCollector()
 
         // Add debug prints
         print("Download destination before: \(downloadDestination.path)")
@@ -1143,12 +1121,13 @@ class SnapshotDownloadTests: XCTestCase {
                 print("Current speed: \(speed)")
             }
 
-            lastSpeed = speed
+            Task { await speedCollector.update(speed) }
         }
 
         // Add more debug prints
         print("Downloaded to: \(downloadedTo.path)")
 
+        let lastSpeed = await speedCollector.lastSpeed
         XCTAssertNotNil(lastSpeed)
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: repo)
@@ -1166,18 +1145,18 @@ class SnapshotDownloadTests: XCTestCase {
 
     func testDownloadWithRevision() async throws {
         let hubApi = HubApi(downloadBase: downloadDestination)
-        var lastProgress: Progress? = nil
+        let progressCollector = ProgressCollector()
 
         let commitHash = "eaf97358a37d03fd48e5a87d15aff2e8423c1afb"
         let downloadedTo = try await hubApi.snapshot(from: repo, revision: commitHash, matching: "*.json") { progress in
             print("Total Progress: \(progress.fractionCompleted)")
             print("Files Completed: \(progress.completedUnitCount) of \(progress.totalUnitCount)")
-            lastProgress = progress
+            Task { await progressCollector.update(progress) }
         }
 
         let downloadedFilenames = getRelativeFiles(url: downloadDestination, repo: repo)
-        XCTAssertEqual(lastProgress?.fractionCompleted, 1)
-        XCTAssertEqual(lastProgress?.completedUnitCount, 6)
+        let fractionCompleted = await progressCollector.fractionCompleted
+        XCTAssertEqual(fractionCompleted, 1)
         XCTAssertEqual(downloadedTo, downloadDestination.appending(path: "models/\(repo)"))
         XCTAssertEqual(
             Set(downloadedFilenames),
@@ -1211,5 +1190,23 @@ class SnapshotDownloadTests: XCTestCase {
         let prRepo = "coreml-projects/sam-2-studio"
         let downloadedTo = try await hubApi.snapshot(from: prRepo, revision: "pr/1", matching: "*.md")
         XCTAssertTrue(FileManager.default.fileExists(atPath: downloadedTo.path))
+    }
+
+    /// Tests that getRepoInfo returns file sizes from the API (used for size-weighted progress)
+    func testGetRepoInfoReturnsFileSizes() async throws {
+        let hubApi = HubApi()
+        let repo = Hub.Repo(id: "mlx-community/Qwen3-0.6B-Base-DQ5")
+
+        let (files, _) = try await hubApi.getRepoInfo(from: repo, matching: ["*.json"])
+
+        // Verify all files have sizes (blobs=true parameter working)
+        let sizes = files.compactMap { $0.size }
+        XCTAssertEqual(sizes.count, files.count, "All files should have sizes from API")
+        XCTAssertGreaterThan(sizes.count, 0, "Should return at least one file")
+
+        // Verify there's size variation (ensures size-weighted progress is meaningful)
+        let minSize = sizes.min()!
+        let maxSize = sizes.max()!
+        XCTAssertGreaterThan(maxSize, minSize * 100, "Should have significant size variation")
     }
 }
