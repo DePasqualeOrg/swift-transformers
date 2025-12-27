@@ -111,6 +111,54 @@ class UnigramTokenizer: PreTrainedTokenizerModel, @unchecked Sendable {
         trie.append(contentsOf: vocab.map { $0.token })
     }
 
+    /// Fast-path initializer using pre-extracted vocab.
+    ///
+    /// This initializer bypasses Config parsing for the large vocab data,
+    /// significantly improving tokenizer loading performance.
+    init(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        addedTokens: [String: Int],
+        rawVocab: [[Any]]
+    ) throws {
+        // Parse vocab directly from raw JSON array of [token, score] pairs
+        vocab = rawVocab.compactMap { pair -> SentencePieceToken? in
+            guard pair.count == 2,
+                let token = pair[0] as? String
+            else { return nil }
+
+            let score: Float
+            if let floatScore = pair[1] as? Double {
+                score = Float(floatScore)
+            } else if let intScore = pair[1] as? Int {
+                score = Float(intScore)
+            } else {
+                return nil
+            }
+
+            return SentencePieceToken(token: token, score: score)
+        }
+
+        minScore = vocab.reduce(999) { partial, token in
+            min(partial, token.score)
+        }
+
+        guard let unknownTokenId = tokenizerData.model["unkId"].integer() else {
+            throw TokenizerError.malformedVocab
+        }
+        self.unknownTokenId = unknownTokenId
+        unknownPiece = SentencePieceToken(token: vocab[unknownTokenId].token, score: minScore - 10)
+
+        tokensToIds = Dictionary(uniqueKeysWithValues: vocab.map { $0.token as NSString }.enumerated().map { ($1, $0) })
+        bosTokenId = tokensToIds[bosToken! as NSString]
+
+        eosToken = tokenizerConfig.eosToken.string()
+        eosTokenId = eosToken == nil ? nil : tokensToIds[eosToken! as NSString]
+
+        trie = Trie()
+        trie.append(contentsOf: vocab.map { $0.token })
+    }
+
     /// Converts a token string to its corresponding numeric ID.
     ///
     /// - Parameter token: The token string to convert
