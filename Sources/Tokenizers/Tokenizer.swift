@@ -155,6 +155,15 @@ public protocol PreTrainedTokenizerModel: TokenizingModel {
 }
 
 enum TokenizerModel {
+    /// User-registered custom tokenizer classes.
+    /// Register via `AutoTokenizer.register(_:for:)`.
+    static var registeredTokenizers: [String: PreTrainedTokenizerModel.Type] = [:]
+
+    /// Returns the tokenizer class for the given name, checking registered tokenizers first.
+    static func tokenizerClass(for name: String) -> PreTrainedTokenizerModel.Type? {
+        registeredTokenizers[name] ?? knownTokenizers[name]
+    }
+
     static let knownTokenizers: [String: PreTrainedTokenizerModel.Type] = [
         "BertTokenizer": BertTokenizer.self,
         "CodeGenTokenizer": BPETokenizer.self,
@@ -190,8 +199,8 @@ enum TokenizerModel {
         // Some tokenizer_class entries use a Fast suffix
         let tokenizerName = tokenizerClassName.replacingOccurrences(of: "Fast", with: "")
         // Fallback to BPETokenizer if class is not explicitly registered
-        let tokenizerClass = TokenizerModel.knownTokenizers[tokenizerName] ?? BPETokenizer.self
-        if TokenizerModel.knownTokenizers[tokenizerName] == nil {
+        let tokenizerClass = TokenizerModel.tokenizerClass(for: tokenizerName) ?? BPETokenizer.self
+        if TokenizerModel.tokenizerClass(for: tokenizerName) == nil {
             if strict {
                 throw TokenizerError.unsupportedTokenizer(tokenizerName)
             } else {
@@ -216,8 +225,8 @@ enum TokenizerModel {
 
         // Some tokenizer_class entries use a Fast suffix
         let tokenizerName = tokenizerClassName.replacingOccurrences(of: "Fast", with: "")
-        let tokenizerClass = TokenizerModel.knownTokenizers[tokenizerName] ?? BPETokenizer.self
-        if TokenizerModel.knownTokenizers[tokenizerName] == nil {
+        let tokenizerClass = TokenizerModel.tokenizerClass(for: tokenizerName) ?? BPETokenizer.self
+        if TokenizerModel.tokenizerClass(for: tokenizerName) == nil {
             if strict {
                 throw TokenizerError.unsupportedTokenizer(tokenizerName)
             } else {
@@ -272,8 +281,8 @@ enum TokenizerModel {
 
         // Some tokenizer_class entries use a Fast suffix
         let tokenizerName = tokenizerClassName.replacingOccurrences(of: "Fast", with: "")
-        let tokenizerClass = TokenizerModel.knownTokenizers[tokenizerName] ?? BPETokenizer.self
-        if TokenizerModel.knownTokenizers[tokenizerName] == nil {
+        let tokenizerClass = TokenizerModel.tokenizerClass(for: tokenizerName) ?? BPETokenizer.self
+        if TokenizerModel.tokenizerClass(for: tokenizerName) == nil {
             if strict {
                 throw TokenizerError.unsupportedTokenizer(tokenizerName)
             } else {
@@ -1062,10 +1071,31 @@ public class PreTrainedTokenizer: @unchecked Sendable, Tokenizer {
 /// `AutoTokenizer` provides static methods for loading pre-trained tokenizers
 /// from the Hugging Face Hub or local directories. It automatically selects
 /// the appropriate tokenizer class based on the configuration.
-public enum AutoTokenizer {}
+public enum AutoTokenizer {
+    /// Registers a custom tokenizer class for a given tokenizer name.
+    ///
+    /// Use this to add support for tokenizer types not included in the library.
+    /// Registration should be done at app launch, before loading any tokenizers.
+    ///
+    /// This mirrors Python transformers' `AutoTokenizer.register()`.
+    ///
+    /// - Parameters:
+    ///   - tokenizerClass: The tokenizer class to register
+    ///   - name: The tokenizer class name as it appears in `tokenizer_config.json`
+    ///           (e.g., "MyCustomTokenizer"). The "Fast" suffix is automatically stripped
+    ///           during lookup.
+    ///
+    /// Example:
+    /// ```swift
+    /// AutoTokenizer.register(MyTokenizer.self, for: "MyCustomTokenizer")
+    /// ```
+    public static func register(_ tokenizerClass: PreTrainedTokenizerModel.Type, for name: String) {
+        TokenizerModel.registeredTokenizers[name] = tokenizerClass
+    }
+}
 
 enum PreTrainedTokenizerClasses {
-    /// Class overrides for custom behaviour
+    /// Class overrides for custom behavior
     /// Not to be confused with the TokenizerModel classes defined in TokenizerModel
     static let tokenizerClasses: [String: PreTrainedTokenizer.Type] = [
         "LlamaTokenizer": LlamaPreTrainedTokenizer.self
