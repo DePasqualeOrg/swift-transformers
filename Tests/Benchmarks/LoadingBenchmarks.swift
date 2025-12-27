@@ -2,7 +2,7 @@
 //  LoadingBenchmarks.swift
 //
 //  Benchmarks for tokenizer loading performance.
-//  Run with: swift test --filter LoadingBenchmarks
+//  Run with: RUN_BENCHMARKS=1 swift test --filter LoadingBenchmarks
 //
 
 import Foundation
@@ -11,7 +11,11 @@ import Testing
 @testable import Hub
 @testable import Tokenizers
 
-@Suite("Tokenizer Loading Benchmarks", .serialized)
+@Suite(
+    "Tokenizer Loading Benchmarks",
+    .serialized,
+    .enabled(if: ProcessInfo.processInfo.environment["RUN_BENCHMARKS"] != nil)
+)
 struct LoadingBenchmarks {
 
     @Test("Benchmark tokenizer loading from local folder")
