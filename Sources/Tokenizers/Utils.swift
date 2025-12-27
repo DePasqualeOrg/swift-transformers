@@ -57,6 +57,7 @@ struct Utils {
     /// Invert a (k, v) dictionary
     static func invert<K, V>(_ dict: [K: V]) -> [V: K] {
         var inverted: [V: K] = [:]
+        inverted.reserveCapacity(dict.count)
         for (k, v) in dict {
             inverted[v] = k
         }

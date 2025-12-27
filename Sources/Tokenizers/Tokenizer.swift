@@ -197,6 +197,117 @@ enum TokenizerModel {
         }
         return try tokenizerClass.init(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, addedTokens: addedTokens)
     }
+
+    /// Fast-path factory using pre-extracted vocab/merges.
+    static func from(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        addedTokens: [String: Int],
+        tokenizerVocab: Any?,
+        tokenizerMerges: [Any]?,
+        strict: Bool = true
+    ) throws -> TokenizingModel {
+        guard let tokenizerClassName = tokenizerConfig.tokenizerClass.string() else {
+            throw TokenizerError.missingTokenizerClassInConfig
+        }
+
+        // Some tokenizer_class entries use a Fast suffix
+        let tokenizerName = tokenizerClassName.replacingOccurrences(of: "Fast", with: "")
+        let tokenizerClass = TokenizerModel.knownTokenizers[tokenizerName] ?? BPETokenizer.self
+        if TokenizerModel.knownTokenizers[tokenizerName] == nil {
+            if strict {
+                throw TokenizerError.unsupportedTokenizer(tokenizerName)
+            } else {
+                print("Warning: Tokenizer model class \(tokenizerName) is not registered, falling back to a standard BPE implementation.")
+            }
+        }
+
+        // Use fast path for BPE if we have raw vocab and merges
+        // Note: includes empty subclasses (creates BPETokenizer instance)
+        if tokenizerClass is BPETokenizer.Type,
+            let rawVocab = tokenizerVocab as? NSDictionary,
+            let rawMerges = tokenizerMerges
+        {
+            return try BPETokenizer(
+                tokenizerConfig: tokenizerConfig,
+                tokenizerData: tokenizerData,
+                addedTokens: addedTokens,
+                rawVocab: rawVocab,
+                rawMerges: rawMerges
+            )
+        }
+
+        // Use fast path for Unigram if we have raw vocab (array format)
+        // Note: includes subclasses like T5Tokenizer
+        if tokenizerClass is UnigramTokenizer.Type,
+            let rawVocab = tokenizerVocab as? [[Any]]
+        {
+            return try UnigramTokenizer(
+                tokenizerConfig: tokenizerConfig,
+                tokenizerData: tokenizerData,
+                addedTokens: addedTokens,
+                rawVocab: rawVocab
+            )
+        }
+
+        // Fallback to standard init
+        return try tokenizerClass.init(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, addedTokens: addedTokens)
+    }
+
+    /// Async fast-path factory using pre-extracted vocab/merges with parallel dictionary building.
+    static func fromAsync(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        addedTokens: [String: Int],
+        tokenizerVocab: Any?,
+        tokenizerMerges: [Any]?,
+        strict: Bool = true
+    ) async throws -> TokenizingModel {
+        guard let tokenizerClassName = tokenizerConfig.tokenizerClass.string() else {
+            throw TokenizerError.missingTokenizerClassInConfig
+        }
+
+        // Some tokenizer_class entries use a Fast suffix
+        let tokenizerName = tokenizerClassName.replacingOccurrences(of: "Fast", with: "")
+        let tokenizerClass = TokenizerModel.knownTokenizers[tokenizerName] ?? BPETokenizer.self
+        if TokenizerModel.knownTokenizers[tokenizerName] == nil {
+            if strict {
+                throw TokenizerError.unsupportedTokenizer(tokenizerName)
+            } else {
+                print("Warning: Tokenizer model class \(tokenizerName) is not registered, falling back to a standard BPE implementation.")
+            }
+        }
+
+        // Use async parallel building for BPE tokenizers
+        // Note: includes empty subclasses (creates BPETokenizer instance)
+        if tokenizerClass is BPETokenizer.Type,
+            let rawVocab = tokenizerVocab as? NSDictionary,
+            let rawMerges = tokenizerMerges
+        {
+            return await BPETokenizer.createAsync(
+                tokenizerConfig: tokenizerConfig,
+                rawVocab: rawVocab,
+                rawMerges: rawMerges,
+                addedTokens: addedTokens
+            )
+        }
+
+        // Use fast path for Unigram if we have raw vocab (array format)
+        // Note: includes subclasses like T5Tokenizer
+        if tokenizerClass is UnigramTokenizer.Type,
+            let rawVocab = tokenizerVocab as? [[Any]]
+        {
+            return try UnigramTokenizer(
+                tokenizerConfig: tokenizerConfig,
+                tokenizerData: tokenizerData,
+                addedTokens: addedTokens,
+                rawVocab: rawVocab
+            )
+        }
+
+        // Fallback to standard init
+        return try tokenizerClass.init(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, addedTokens: addedTokens)
+    }
 }
 
 /// Arguments for specifying chat templates when applying chat formatting.
@@ -486,9 +597,17 @@ public class PreTrainedTokenizer: @unchecked Sendable, Tokenizer {
     /// - Parameters:
     ///   - tokenizerConfig: Configuration from tokenizer_config.json
     ///   - tokenizerData: Configuration from tokenizer.json
+    ///   - tokenizerVocab: Pre-extracted vocabulary for fast initialization (optional)
+    ///   - tokenizerMerges: Pre-extracted merges for fast initialization (optional)
     ///   - strict: Whether to enforce strict validation of tokenizer types
     /// - Throws: `TokenizerError` if configuration is invalid or tokenizer type is unsupported
-    public required init(tokenizerConfig: Config, tokenizerData: Config, strict: Bool = true) throws {
+    public required init(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        tokenizerVocab: Any? = nil,
+        tokenizerMerges: [Any]? = nil,
+        strict: Bool = true
+    ) throws {
         var addedTokens: [String: Int] = [:]
         var specialTokens: [String: Int] = [:]
         for addedToken in tokenizerData["addedTokens"].array(or: []) {
@@ -531,7 +650,105 @@ public class PreTrainedTokenizer: @unchecked Sendable, Tokenizer {
         cleanUpTokenizationSpaces = tokenizerConfig.cleanUpTokenizationSpaces.boolean(or: true)
         self.tokenizerConfig = tokenizerConfig
 
-        model = try TokenizerModel.from(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, addedTokens: addedTokens, strict: strict)
+        // Use fast path if vocab/merges provided, otherwise fall back to standard Config-based init
+        if tokenizerVocab != nil {
+            model = try TokenizerModel.from(
+                tokenizerConfig: tokenizerConfig,
+                tokenizerData: tokenizerData,
+                addedTokens: addedTokens,
+                tokenizerVocab: tokenizerVocab,
+                tokenizerMerges: tokenizerMerges,
+                strict: strict
+            )
+        } else {
+            model = try TokenizerModel.from(
+                tokenizerConfig: tokenizerConfig,
+                tokenizerData: tokenizerData,
+                addedTokens: addedTokens,
+                strict: strict
+            )
+        }
+    }
+
+    /// Parses addedTokens from tokenizerData, returning (addedTokens dict, specialTokens dict).
+    internal static func parseAddedTokens(from tokenizerData: Config) -> (tokens: [String: Int], special: [String: Int]) {
+        var addedTokens: [String: Int] = [:]
+        var specialTokens: [String: Int] = [:]
+        for addedToken in tokenizerData["addedTokens"].array(or: []) {
+            guard let id = addedToken["id"].integer() else { continue }
+            guard let content = addedToken.content.string() else { continue }
+            addedTokens[content] = id
+            if addedToken["special"].boolean(or: false) {
+                specialTokens[content] = id
+            }
+        }
+        return (addedTokens, specialTokens)
+    }
+
+    /// Internal init accepting a pre-built model (used by async factory).
+    /// Subclasses can use this to support async parallel building.
+    internal init(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        model: TokenizingModel
+    ) {
+        self.model = model
+
+        let parsed = Self.parseAddedTokens(from: tokenizerData)
+        self.specialTokens = parsed.special
+        self.addedTokens = Set(parsed.tokens.keys)
+
+        let unwrappedAddedTokens: [(content: String, prefix: Bool, suffix: Bool)] = (tokenizerData["addedTokens"].array(or: [])).compactMap { addedToken -> (String, Bool, Bool)? in
+            guard let content = addedToken.content.string() else { return nil }
+            let prefix = addedToken["lstrip"].boolean(or: false)
+            let suffix = addedToken["rstrip"].boolean(or: false)
+            return (content: content, prefix: prefix, suffix: suffix)
+        }.sorted {
+            $0.content.count > $1.content.count
+        }
+
+        let addedTokensRegexString = unwrappedAddedTokens.map {
+            let token = NSRegularExpression.escapedPattern(for: $0.content)
+            let prefix = $0.prefix ? #"\s*"# : ""
+            let suffix = $0.suffix ? #"\s*"# : ""
+            return "\(prefix)(\(token))\(suffix)"
+        }.joined(separator: "|")
+        addedTokensRegex = try? NSRegularExpression(pattern: addedTokensRegexString, options: [])
+
+        preTokenizer = PreTokenizerFactory.fromConfig(config: tokenizerData["preTokenizer"])
+        normalizer = NormalizerFactory.fromConfig(config: tokenizerData["normalizer"])
+        postProcessor = PostProcessorFactory.fromConfig(config: tokenizerData["postProcessor"])
+        decoder = DecoderFactory.fromConfig(config: tokenizerData["decoder"], addedTokens: self.addedTokens)
+        cleanUpTokenizationSpaces = tokenizerConfig.cleanUpTokenizationSpaces.boolean(or: true)
+        self.tokenizerConfig = tokenizerConfig
+    }
+
+    /// Async factory that builds BPE dictionaries in parallel for faster loading.
+    class func createAsync(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        tokenizerVocab: Any?,
+        tokenizerMerges: [Any]?,
+        strict: Bool = true
+    ) async throws -> PreTrainedTokenizer {
+        // Parse addedTokens (small data, used for model init)
+        let parsed = parseAddedTokens(from: tokenizerData)
+
+        // Use async parallel building for the model
+        let model = try await TokenizerModel.fromAsync(
+            tokenizerConfig: tokenizerConfig,
+            tokenizerData: tokenizerData,
+            addedTokens: parsed.tokens,
+            tokenizerVocab: tokenizerVocab,
+            tokenizerMerges: tokenizerMerges,
+            strict: strict
+        )
+
+        return PreTrainedTokenizer(
+            tokenizerConfig: tokenizerConfig,
+            tokenizerData: tokenizerData,
+            model: model
+        )
     }
 
     private func compiledTemplate(for templateString: String) throws -> Template {
@@ -897,11 +1114,19 @@ public extension AutoTokenizer {
         hubApi: HubApi = .shared,
         strict: Bool = true
     ) async throws -> Tokenizer {
-        let config = LanguageModelConfigurationFromHub(modelName: model, hubApi: hubApi)
+        let config = LanguageModelConfigurationFromHub(modelName: model, hubApi: hubApi, stripVocabForPerformance: true)
         guard let tokenizerConfig = try await config.tokenizerConfig else { throw TokenizerError.missingConfig }
         let tokenizerData = try await config.tokenizerData
+        let vocab = try await config.tokenizerVocab
+        let merges = try await config.tokenizerMerges
 
-        return try AutoTokenizer.from(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, strict: strict)
+        return try await AutoTokenizer.fromAsync(
+            tokenizerConfig: tokenizerConfig,
+            tokenizerData: tokenizerData,
+            tokenizerVocab: vocab,
+            tokenizerMerges: merges,
+            strict: strict
+        )
     }
 
     /// Loads a tokenizer from a local model folder.
@@ -917,11 +1142,57 @@ public extension AutoTokenizer {
         hubApi: HubApi = .shared,
         strict: Bool = true
     ) async throws -> Tokenizer {
-        let config = LanguageModelConfigurationFromHub(modelFolder: modelFolder, hubApi: hubApi)
+        let config = LanguageModelConfigurationFromHub(modelFolder: modelFolder, hubApi: hubApi, stripVocabForPerformance: true)
         guard let tokenizerConfig = try await config.tokenizerConfig else { throw TokenizerError.missingConfig }
         let tokenizerData = try await config.tokenizerData
+        let vocab = try await config.tokenizerVocab
+        let merges = try await config.tokenizerMerges
 
-        return try PreTrainedTokenizer(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, strict: strict)
+        return try await AutoTokenizer.fromAsync(
+            tokenizerConfig: tokenizerConfig,
+            tokenizerData: tokenizerData,
+            tokenizerVocab: vocab,
+            tokenizerMerges: merges,
+            strict: strict
+        )
+    }
+
+    /// Internal method that accepts pre-extracted vocab/merges for fast initialization.
+    internal static func from(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        tokenizerVocab: Any?,
+        tokenizerMerges: [Any]?,
+        strict: Bool = true
+    ) throws -> Tokenizer {
+        let tokenizerClass = tokenizerClass(for: tokenizerConfig)
+        return try tokenizerClass.init(
+            tokenizerConfig: tokenizerConfig,
+            tokenizerData: tokenizerData,
+            tokenizerVocab: tokenizerVocab,
+            tokenizerMerges: tokenizerMerges,
+            strict: strict
+        )
+    }
+
+    /// Internal async method that builds dictionaries in parallel for faster loading.
+    internal static func fromAsync(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        tokenizerVocab: Any?,
+        tokenizerMerges: [Any]?,
+        strict: Bool = true
+    ) async throws -> Tokenizer {
+        let selectedClass = tokenizerClass(for: tokenizerConfig)
+
+        // Use async factory with dynamic dispatch (subclasses can override createAsync)
+        return try await selectedClass.createAsync(
+            tokenizerConfig: tokenizerConfig,
+            tokenizerData: tokenizerData,
+            tokenizerVocab: tokenizerVocab,
+            tokenizerMerges: tokenizerMerges,
+            strict: strict
+        )
     }
 }
 
@@ -979,8 +1250,81 @@ func maybeUpdatePostProcessor(tokenizerConfig: Config, processorConfig: Config?)
 class LlamaPreTrainedTokenizer: PreTrainedTokenizer, @unchecked Sendable {
     let isLegacy: Bool
 
-    required init(tokenizerConfig: Config, tokenizerData: Config, strict: Bool = true) throws {
+    required init(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        tokenizerVocab: Any? = nil,
+        tokenizerMerges: [Any]? = nil,
+        strict: Bool = true
+    ) throws {
         isLegacy = tokenizerConfig.legacy.boolean(or: true)
+        let updatedData = try Self.buildUpdatedConfig(
+            tokenizerConfig: tokenizerConfig,
+            tokenizerData: tokenizerData,
+            isLegacy: isLegacy
+        )
+        try super.init(
+            tokenizerConfig: tokenizerConfig,
+            tokenizerData: updatedData,
+            tokenizerVocab: tokenizerVocab,
+            tokenizerMerges: tokenizerMerges,
+            strict: strict
+        )
+    }
+
+    /// Internal init accepting a pre-built model (used by async factory).
+    internal init(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        model: TokenizingModel,
+        isLegacy: Bool
+    ) {
+        self.isLegacy = isLegacy
+        super.init(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, model: model)
+    }
+
+    /// Async factory that builds model in parallel for faster loading.
+    override class func createAsync(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        tokenizerVocab: Any?,
+        tokenizerMerges: [Any]?,
+        strict: Bool = true
+    ) async throws -> PreTrainedTokenizer {
+        let isLegacy = tokenizerConfig.legacy.boolean(or: true)
+        let updatedData = try buildUpdatedConfig(
+            tokenizerConfig: tokenizerConfig,
+            tokenizerData: tokenizerData,
+            isLegacy: isLegacy
+        )
+
+        // Parse addedTokens for model init
+        let parsed = parseAddedTokens(from: updatedData)
+
+        // Build model asynchronously with parallel dictionary building
+        let model = try await TokenizerModel.fromAsync(
+            tokenizerConfig: tokenizerConfig,
+            tokenizerData: updatedData,
+            addedTokens: parsed.tokens,
+            tokenizerVocab: tokenizerVocab,
+            tokenizerMerges: tokenizerMerges,
+            strict: strict
+        )
+
+        return LlamaPreTrainedTokenizer(
+            tokenizerConfig: tokenizerConfig,
+            tokenizerData: updatedData,
+            model: model,
+            isLegacy: isLegacy
+        )
+    }
+
+    /// Builds the modified config for Llama tokenizers.
+    private static func buildUpdatedConfig(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        isLegacy: Bool
+    ) throws -> Config {
         var configDictionary = tokenizerData.dictionary(or: [:])
         if !isLegacy {
             _ = configDictionary.removeValue(forKey: "normalizer")
@@ -993,8 +1337,7 @@ class LlamaPreTrainedTokenizer: PreTrainedTokenizer, @unchecked Sendable {
             configDictionary["post_processor"] = .init(postProcessorConfig.dictionary(or: [:]))
         }
 
-        let updatedData = Config(configDictionary)
-        try super.init(tokenizerConfig: tokenizerConfig, tokenizerData: updatedData, strict: strict)
+        return Config(configDictionary)
     }
 
     /// If `isLegacy` is `False`, a prefix token is added unless the first token is special.
