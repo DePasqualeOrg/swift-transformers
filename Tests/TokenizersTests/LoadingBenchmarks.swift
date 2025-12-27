@@ -194,9 +194,7 @@ struct LoadingBenchmarks {
 
         // --- Stage 2: Parse JSON ---
         let stage2Start = CFAbsoluteTimeGetCurrent()
-        guard let parsedAny = try JSONSerialization.bomPreservingJsonObject(with: tokenizerJsonData) as? NSDictionary else {
-            throw Hub.HubClientError.parse
-        }
+        let parsedAny = try YYJSONParser.parseToNSDictionary(tokenizerJsonData)
         let parsed = NSMutableDictionary(dictionary: parsedAny)
         let parsedConfig = try JSONSerialization.jsonObject(with: tokenizerConfigData) as! [NSString: Any]
         let stage2Time = (CFAbsoluteTimeGetCurrent() - stage2Start) * 1000
@@ -350,8 +348,8 @@ struct LoadingBenchmarks {
 
         // Parse JSON and extract vocab/merges
         let tokenizerJsonData = try Data(contentsOf: tokenizerJsonURL)
-        guard let parsedAny = try JSONSerialization.bomPreservingJsonObject(with: tokenizerJsonData) as? NSDictionary,
-            let modelDict = parsedAny["model"] as? NSDictionary,
+        let parsedAny = try YYJSONParser.parseToNSDictionary(tokenizerJsonData)
+        guard let modelDict = parsedAny["model"] as? NSDictionary,
             let rawVocab = modelDict["vocab"] as? NSDictionary,
             let rawMerges = modelDict["merges"] as? [Any]
         else {
