@@ -70,6 +70,116 @@ enum YYJSONParser {
         }
     }
 
+    /// Parses JSON data into an NSDictionary.
+    ///
+    /// This method is useful when you need Foundation objects (NSDictionary, NSArray)
+    /// instead of Config, such as when extracting vocab/merges for tokenizer initialization
+    /// where the raw Foundation types are needed for performance.
+    ///
+    /// - Parameter data: The JSON data to parse
+    /// - Returns: An NSDictionary
+    /// - Throws: ParseError if parsing fails
+    static func parseToNSDictionary(_ data: Data) throws -> NSDictionary {
+        try data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) -> NSDictionary in
+            guard let baseAddress = buffer.baseAddress else {
+                throw ParseError.nullDocument
+            }
+
+            var err = yyjson_read_err()
+            let doc = yyjson_read_opts(
+                UnsafeMutableRawPointer(mutating: baseAddress).assumingMemoryBound(to: CChar.self),
+                buffer.count,
+                YYJSON_READ_ALLOW_BOM,
+                nil,
+                &err
+            )
+
+            guard let doc = doc else {
+                let message = err.msg.map { String(cString: $0) } ?? "unknown error"
+                throw ParseError.readFailed(code: err.code, message: message, position: err.pos)
+            }
+
+            defer { yyjson_doc_free(doc) }
+
+            guard let root = yyjson_doc_get_root(doc) else {
+                throw ParseError.nullDocument
+            }
+
+            guard let result = convertToFoundation(root) as? NSDictionary else {
+                throw ParseError.nullDocument
+            }
+
+            return result
+        }
+    }
+
+    // MARK: - Foundation object conversion
+
+    private static func convertToFoundation(_ val: UnsafeMutablePointer<yyjson_val>) -> Any {
+        let tag = yyjson_get_tag(val)
+        let type = tag & 0x07
+        let subtype = tag & 0x18
+
+        switch type {
+        case 0x02: // YYJSON_TYPE_NULL
+            return NSNull()
+        case 0x03: // YYJSON_TYPE_BOOL
+            return NSNumber(value: subtype == 0x08)
+        case 0x04: // YYJSON_TYPE_NUM
+            if subtype == 0x00 { // YYJSON_SUBTYPE_UINT
+                return NSNumber(value: yyjson_get_uint(val))
+            } else if subtype == 0x08 { // YYJSON_SUBTYPE_SINT
+                return NSNumber(value: yyjson_get_sint(val))
+            } else { // YYJSON_SUBTYPE_REAL
+                return NSNumber(value: yyjson_get_real(val))
+            }
+        case 0x05: // YYJSON_TYPE_STR
+            guard let str = yyjson_get_str(val) else { return "" as NSString }
+            return String(cString: str) as NSString
+        case 0x06: // YYJSON_TYPE_ARR
+            return convertArrayToFoundation(val)
+        case 0x07: // YYJSON_TYPE_OBJ
+            return convertObjectToFoundation(val)
+        default:
+            return NSNull()
+        }
+    }
+
+    private static func convertObjectToFoundation(_ obj: UnsafeMutablePointer<yyjson_val>) -> NSDictionary {
+        let size = yyjson_obj_size(obj)
+        let result = NSMutableDictionary(capacity: Int(size))
+
+        var iter = yyjson_obj_iter()
+        yyjson_obj_iter_init(obj, &iter)
+
+        while let key = yyjson_obj_iter_next(&iter) {
+            guard let keyPtr = yyjson_get_str(key),
+                let val = yyjson_obj_iter_get_val(key)
+            else {
+                continue
+            }
+
+            let keyString = String(cString: keyPtr) as NSString
+            result[keyString] = convertToFoundation(val)
+        }
+
+        return result
+    }
+
+    private static func convertArrayToFoundation(_ arr: UnsafeMutablePointer<yyjson_val>) -> NSArray {
+        let size = yyjson_arr_size(arr)
+        let result = NSMutableArray(capacity: Int(size))
+
+        var iter = yyjson_arr_iter()
+        yyjson_arr_iter_init(arr, &iter)
+
+        while let val = yyjson_arr_iter_next(&iter) {
+            result.add(convertToFoundation(val))
+        }
+
+        return result
+    }
+
     // MARK: - Direct Config conversion
 
     private static func convertToConfig(_ val: UnsafeMutablePointer<yyjson_val>) -> Config {
