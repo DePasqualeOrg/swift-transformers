@@ -110,18 +110,26 @@ public extension Hub {
 
 /// Manages language model configuration loading from the Hugging Face Hub.
 ///
-/// This class handles the asynchronous loading and processing of model configurations,
+/// This actor handles the asynchronous loading and processing of model configurations,
 /// tokenizer configurations, and tokenizer data from either remote Hub repositories
 /// or local model directories. It provides fallback mechanisms for missing configurations
 /// and manages the complexities of different model types and their specific requirements.
-public final class LanguageModelConfigurationFromHub: Sendable {
-    struct Configurations {
-        var modelConfig: Config?
-        var tokenizerConfig: Config?
-        var tokenizerData: Config
+public actor LanguageModelConfigurationFromHub {
+    private enum Source {
+        case remote(modelName: String, revision: String, hubApi: HubApi)
+        case local(modelFolder: URL, hubApi: HubApi)
     }
 
-    private let configPromise: Task<Configurations, Error>
+    private let source: Source
+    private let stripVocabForPerformance: Bool
+    private var isLoaded = false
+
+    // Cached values (populated once during load)
+    private var _modelConfig: Config?
+    private var _tokenizerConfig: Config?
+    private var _tokenizerData: Config!
+    private var _tokenizerVocab: Any?
+    private var _tokenizerMerges: [Any]?
 
     /// Initializes configuration loading from a remote Hub repository.
     ///
@@ -129,14 +137,17 @@ public final class LanguageModelConfigurationFromHub: Sendable {
     ///   - modelName: The name/ID of the model repository (e.g., "microsoft/DialoGPT-medium")
     ///   - revision: The git revision to use (defaults to "main")
     ///   - hubApi: The Hub API client to use (defaults to shared instance)
+    ///   - stripVocabForPerformance: If true, strips vocab/merges from tokenizerData for faster
+    ///     Config conversion. Use tokenizerVocab/tokenizerMerges properties instead. Defaults to
+    ///     false for backward compatibility.
     public init(
         modelName: String,
         revision: String = "main",
-        hubApi: HubApi = .shared
+        hubApi: HubApi = .shared,
+        stripVocabForPerformance: Bool = false
     ) {
-        configPromise = Task.init {
-            try await Self.loadConfig(modelName: modelName, revision: revision, hubApi: hubApi)
-        }
+        self.source = .remote(modelName: modelName, revision: revision, hubApi: hubApi)
+        self.stripVocabForPerformance = stripVocabForPerformance
     }
 
     /// Initializes configuration loading from a local model directory.
@@ -144,89 +155,151 @@ public final class LanguageModelConfigurationFromHub: Sendable {
     /// - Parameters:
     ///   - modelFolder: The local directory containing model configuration files
     ///   - hubApi: The Hub API client to use for parsing configurations (defaults to shared instance)
+    ///   - stripVocabForPerformance: If true, strips vocab/merges from tokenizerData for faster
+    ///     Config conversion. Use tokenizerVocab/tokenizerMerges properties instead. Defaults to
+    ///     false for backward compatibility.
     public init(
         modelFolder: URL,
-        hubApi: HubApi = .shared
+        hubApi: HubApi = .shared,
+        stripVocabForPerformance: Bool = false
     ) {
-        configPromise = Task {
-            try await Self.loadConfig(modelFolder: modelFolder, hubApi: hubApi)
+        self.source = .local(modelFolder: modelFolder, hubApi: hubApi)
+        self.stripVocabForPerformance = stripVocabForPerformance
+    }
+
+    /// Loads configurations on first access and caches the results.
+    private func ensureLoaded() async throws {
+        guard !isLoaded else { return }
+
+        let configs: LoadedConfigurations
+        switch source {
+        case .remote(let modelName, let revision, let hubApi):
+            configs = try await Self.loadConfigurations(
+                modelName: modelName, revision: revision, hubApi: hubApi,
+                stripVocabForPerformance: stripVocabForPerformance)
+        case .local(let modelFolder, let hubApi):
+            configs = try await Self.loadConfigurations(
+                modelFolder: modelFolder, hubApi: hubApi,
+                stripVocabForPerformance: stripVocabForPerformance)
         }
+
+        _modelConfig = configs.modelConfig
+        _tokenizerData = configs.tokenizerData
+        _tokenizerVocab = configs.tokenizerVocab
+        _tokenizerMerges = configs.tokenizerMerges
+
+        // Resolve tokenizerConfig with fallbacks
+        _tokenizerConfig = Self.resolveTokenizerConfig(
+            hubConfig: configs.tokenizerConfig,
+            modelType: configs.modelConfig?.modelType.string()
+        )
+
+        isLoaded = true
     }
 
     /// The main model configuration containing architecture and parameter settings.
-    ///
-    /// - Returns: The loaded model configuration
-    /// - Throws: Hub errors if configuration loading fails
     public var modelConfig: Config? {
         get async throws {
-            try await configPromise.value.modelConfig
+            try await ensureLoaded()
+            return _modelConfig
         }
     }
 
     /// The tokenizer configuration with automatic fallback handling.
-    ///
-    /// This property attempts to load the tokenizer configuration from the Hub,
-    /// applying fallback configurations when needed and inferring tokenizer classes
-    /// based on the model type when not explicitly specified.
-    ///
-    /// - Returns: The tokenizer configuration, or nil if not available
-    /// - Throws: Hub errors if configuration loading fails
     public var tokenizerConfig: Config? {
         get async throws {
-            if let hubConfig = try await configPromise.value.tokenizerConfig {
-                // Try to guess the class if it's not present and the modelType is
-                if hubConfig.tokenizerClass?.string() != nil { return hubConfig }
-                guard let modelType = try await modelType else { return hubConfig }
-
-                // If the config exists but doesn't contain a tokenizerClass, use a fallback config if we have it
-                if let fallbackConfig = Self.fallbackTokenizerConfig(for: modelType) {
-                    let configuration = fallbackConfig.dictionary()?.merging(hubConfig.dictionary(or: [:]), strategy: { current, _ in current }) ?? [:]
-                    return Config(configuration)
-                }
-
-                // Guess by capitalizing
-                var configuration = hubConfig.dictionary(or: [:])
-                configuration["tokenizer_class"] = .init("\(modelType.capitalized)Tokenizer")
-                return Config(configuration)
-            }
-
-            // Fallback tokenizer config, if available
-            guard let modelType = try await modelType else { return nil }
-            return Self.fallbackTokenizerConfig(for: modelType)
+            try await ensureLoaded()
+            return _tokenizerConfig
         }
     }
 
     /// The tokenizer data containing vocabulary and merge rules.
-    ///
-    /// - Returns: The loaded tokenizer data configuration
-    /// - Throws: Hub errors if configuration loading fails
     public var tokenizerData: Config {
         get async throws {
-            try await configPromise.value.tokenizerData
+            try await ensureLoaded()
+            return _tokenizerData
+        }
+    }
+
+    /// Raw vocabulary data extracted directly from JSON for fast tokenizer initialization.
+    /// For BPE: `NSDictionary`. For Unigram: `[[Any]]` array of [token, score] pairs.
+    public var tokenizerVocab: Any? {
+        get async throws {
+            try await ensureLoaded()
+            return _tokenizerVocab
+        }
+    }
+
+    /// Raw merges array extracted directly from JSON for fast BPE tokenizer initialization.
+    public var tokenizerMerges: [Any]? {
+        get async throws {
+            try await ensureLoaded()
+            return _tokenizerMerges
         }
     }
 
     /// The model architecture type extracted from the configuration.
-    ///
-    /// - Returns: The model type string, or nil if not specified
-    /// - Throws: Hub errors if configuration loading fails
     public var modelType: String? {
         get async throws {
-            try await modelConfig?.modelType.string()
+            try await ensureLoaded()
+            return _modelConfig?.modelType.string()
         }
     }
 
-    static func loadConfig(
+    // MARK: - Private Loading
+
+    /// Raw configurations before fallback resolution.
+    private struct LoadedConfigurations {
+        var modelConfig: Config?
+        var tokenizerConfig: Config?
+        var tokenizerData: Config
+        var tokenizerVocab: Any?
+        var tokenizerMerges: [Any]?
+    }
+
+    /// Resolves tokenizerConfig with fallback logic.
+    private static func resolveTokenizerConfig(hubConfig: Config?, modelType: String?) -> Config? {
+        if let hubConfig {
+            // If tokenizerClass is present, use as-is
+            if hubConfig.tokenizerClass?.string() != nil {
+                return hubConfig
+            }
+
+            guard let modelType else { return hubConfig }
+
+            // Try fallback config for this model type
+            if let fallbackConfig = fallbackTokenizerConfig(for: modelType) {
+                let merged =
+                    fallbackConfig.dictionary()?.merging(
+                        hubConfig.dictionary(or: [:]),
+                        strategy: { current, _ in current }
+                    ) ?? [:]
+                return Config(merged)
+            }
+
+            // Guess tokenizer class by capitalizing model type
+            var configuration = hubConfig.dictionary(or: [:])
+            configuration["tokenizer_class"] = .init("\(modelType.capitalized)Tokenizer")
+            return Config(configuration)
+        }
+
+        // No hub config - use fallback if available
+        guard let modelType else { return nil }
+        return fallbackTokenizerConfig(for: modelType)
+    }
+
+    private static func loadConfigurations(
         modelName: String,
         revision: String,
-        hubApi: HubApi = .shared
-    ) async throws -> Configurations {
+        hubApi: HubApi = .shared,
+        stripVocabForPerformance: Bool
+    ) async throws -> LoadedConfigurations {
         let filesToDownload = ["config.json", "tokenizer_config.json", "chat_template.jinja", "chat_template.json", "tokenizer.json"]
         let repo = Hub.Repo(id: modelName)
 
         do {
             let downloadedModelFolder = try await hubApi.snapshot(from: repo, revision: revision, matching: filesToDownload)
-            return try await loadConfig(modelFolder: downloadedModelFolder, hubApi: hubApi)
+            return try await loadConfigurations(modelFolder: downloadedModelFolder, hubApi: hubApi, stripVocabForPerformance: stripVocabForPerformance)
         } catch {
             // Convert generic errors to more specific ones
             if let urlError = error as? URLError {
@@ -244,10 +317,11 @@ public final class LanguageModelConfigurationFromHub: Sendable {
         }
     }
 
-    static func loadConfig(
+    private static func loadConfigurations(
         modelFolder: URL,
-        hubApi: HubApi = .shared
-    ) async throws -> Configurations {
+        hubApi: HubApi = .shared,
+        stripVocabForPerformance: Bool
+    ) async throws -> LoadedConfigurations {
         do {
             // Load required configurations
             let modelConfigURL = modelFolder.appending(path: "config.json")
@@ -262,7 +336,41 @@ public final class LanguageModelConfigurationFromHub: Sendable {
                 throw Hub.HubClientError.configurationMissing("tokenizer.json")
             }
 
-            let tokenizerData = try hubApi.configuration(fileURL: tokenizerDataURL)
+            // Parse tokenizer.json and extract vocab/merges BEFORE Config conversion
+            // This avoids the expensive recursive wrapping of 300k+ entries in Config
+            let tokenizerJsonData = try Data(contentsOf: tokenizerDataURL)
+            // Use bomPreservingJsonObject to handle BOM sequences in token strings (e.g., Gemma)
+            guard let parsedAny = try JSONSerialization.bomPreservingJsonObject(with: tokenizerJsonData) as? NSDictionary else {
+                throw Hub.HubClientError.parse
+            }
+            // Keep as NSMutableDictionary to preserve NSString keys (avoids Unicode normalization)
+            let parsed = NSMutableDictionary(dictionary: parsedAny)
+
+            // Extract vocab/merges for fast tokenizer initialization (BPE and Unigram)
+            var tokenizerVocab: Any? = nil
+            var tokenizerMerges: [Any]? = nil
+
+            if let modelDict = parsed["model"] as? NSDictionary {
+                let model = NSMutableDictionary(dictionary: modelDict)
+                let modelType = model["type"] as? String
+
+                // Only extract and strip for BPE and Unigram models
+                if modelType == "BPE" || modelType == "Unigram" {
+                    // Extract vocab preserving NSString keys to avoid Unicode normalization
+                    tokenizerVocab = model["vocab"]
+                    tokenizerMerges = model["merges"] as? [Any]
+
+                    // Only strip if opted in (for backward compatibility)
+                    if stripVocabForPerformance {
+                        model.removeObject(forKey: "vocab")
+                        model.removeObject(forKey: "merges")
+                        parsed["model"] = model
+                    }
+                }
+            }
+
+            // Convert dict to Config (fast if stripped, slower if not)
+            let tokenizerData = Config(parsed as! [NSString: Any])
 
             // Load tokenizer config (optional)
             var tokenizerConfig: Config? = nil
@@ -297,10 +405,12 @@ public final class LanguageModelConfigurationFromHub: Sendable {
                 }
             }
 
-            return Configurations(
+            return LoadedConfigurations(
                 modelConfig: modelConfig,
                 tokenizerConfig: tokenizerConfig,
-                tokenizerData: tokenizerData
+                tokenizerData: tokenizerData,
+                tokenizerVocab: tokenizerVocab,
+                tokenizerMerges: tokenizerMerges
             )
         } catch let error as Hub.HubClientError {
             throw error
