@@ -1109,15 +1109,17 @@ public extension AutoTokenizer {
     /// - Parameters:
     ///   - model: The model identifier (e.g., "bert-base-uncased")
     ///   - hubApi: The Hub API instance to use for downloading
+    ///   - revision: The git revision to use (defaults to "main")
     ///   - strict: Whether to enforce strict validation
     /// - Returns: A configured `Tokenizer` instance
     /// - Throws: `TokenizerError` if the model cannot be loaded or configured
     static func from(
         pretrained model: String,
         hubApi: HubApi = .shared,
+        revision: String = "main",
         strict: Bool = true
     ) async throws -> Tokenizer {
-        let config = LanguageModelConfigurationFromHub(modelName: model, hubApi: hubApi, stripVocabForPerformance: true)
+        let config = LanguageModelConfigurationFromHub(modelName: model, revision: revision, hubApi: hubApi, stripVocabForPerformance: true)
         guard let tokenizerConfig = try await config.tokenizerConfig else { throw TokenizerError.missingConfig }
         let tokenizerData = try await config.tokenizerData
         let vocab = try await config.tokenizerVocab
