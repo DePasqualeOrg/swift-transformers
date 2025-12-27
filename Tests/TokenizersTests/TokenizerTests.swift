@@ -61,12 +61,7 @@ private func loadEdgeCases(for hubModelName: String) throws -> [EdgeCase]? {
 }
 
 private func makeTokenizer(hubModelName: String, hubApi: HubApi) async throws -> PreTrainedTokenizer {
-    let config = LanguageModelConfigurationFromHub(modelName: hubModelName, hubApi: hubApi)
-    guard let tokenizerConfig = try await config.tokenizerConfig else {
-        throw TokenizerError.tokenizerConfigNotFound
-    }
-    let tokenizerData = try await config.tokenizerData
-    let tokenizer = try AutoTokenizer.from(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData)
+    let tokenizer = try await AutoTokenizer.from(pretrained: hubModelName, hubApi: hubApi)
     guard let pretrained = tokenizer as? PreTrainedTokenizer else {
         throw TestError.unsupportedTokenizer
     }
@@ -194,17 +189,8 @@ struct TokenizerTests {
             return
         }
 
-        let configuration = LanguageModelConfigurationFromHub(modelFolder: tokenizerConfigURL.deletingLastPathComponent())
-
-        let tokenizerConfigOpt = try await configuration.tokenizerConfig
-        #expect(tokenizerConfigOpt != nil)
-        let tokenizerConfig = tokenizerConfigOpt!
-        let tokenizerData = try await configuration.tokenizerData
-
-        let tokenizer = try AutoTokenizer.from(
-            tokenizerConfig: tokenizerConfig,
-            tokenizerData: tokenizerData
-        )
+        let modelFolder = tokenizerConfigURL.deletingLastPathComponent()
+        let tokenizer = try await AutoTokenizer.from(modelFolder: modelFolder)
 
         let encoded = tokenizer.encode(text: "offline path")
         #expect(!encoded.isEmpty)
