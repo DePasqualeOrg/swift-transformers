@@ -339,10 +339,8 @@ public actor LanguageModelConfigurationFromHub {
             // Parse tokenizer.json and extract vocab/merges BEFORE Config conversion
             // This avoids the expensive recursive wrapping of 300k+ entries in Config
             let tokenizerJsonData = try Data(contentsOf: tokenizerDataURL)
-            // Use bomPreservingJsonObject to handle BOM sequences in token strings (e.g., Gemma)
-            guard let parsedAny = try JSONSerialization.bomPreservingJsonObject(with: tokenizerJsonData) as? NSDictionary else {
-                throw Hub.HubClientError.parse
-            }
+            // Use yyjson for fast parsing with BOM handling
+            let parsedAny = try YYJSONParser.parseToNSDictionary(tokenizerJsonData)
             // Keep as NSMutableDictionary to preserve NSString keys (avoids Unicode normalization)
             let parsed = NSMutableDictionary(dictionary: parsedAny)
 
