@@ -276,6 +276,7 @@ public extension HubApi {
         return Array(selected)
     }
 
+    @available(*, deprecated, message: "Use getFilenames(from: Repo(id:), ...) or a string literal instead")
     func getFilenames(from repoId: String, matching globs: [String] = []) async throws -> [String] {
         try await getFilenames(from: Repo(id: repoId), matching: globs)
     }
@@ -284,6 +285,7 @@ public extension HubApi {
         try await getFilenames(from: repo, matching: [glob])
     }
 
+    @available(*, deprecated, message: "Use getFilenames(from: Repo(id:), ...) or a string literal instead")
     func getFilenames(from repoId: String, matching glob: String) async throws -> [String] {
         try await getFilenames(from: Repo(id: repoId), matching: [glob])
     }
@@ -673,6 +675,7 @@ public extension HubApi {
         }
     }
 
+    @available(*, deprecated, message: "Use snapshot(from: Repo(id:), ...) or a string literal instead")
     @discardableResult
     func snapshot(from repoId: String, revision: String = "main", matching globs: [String] = [], progressHandler: @escaping (Progress) -> Void = { _ in }) async throws -> URL {
         try await snapshot(from: Repo(id: repoId), revision: revision, matching: globs, progressHandler: progressHandler)
@@ -683,12 +686,14 @@ public extension HubApi {
         try await snapshot(from: repo, revision: revision, matching: [glob], progressHandler: progressHandler)
     }
 
+    @available(*, deprecated, message: "Use snapshot(from: Repo(id:), ...) or a string literal instead")
     @discardableResult
     func snapshot(from repoId: String, revision: String = "main", matching glob: String, progressHandler: @escaping (Progress) -> Void = { _ in }) async throws -> URL {
         try await snapshot(from: Repo(id: repoId), revision: revision, matching: [glob], progressHandler: progressHandler)
     }
 
     /// Convenience overloads for other snapshot entry points with speed
+    @available(*, deprecated, message: "Use snapshot(from: Repo(id:), ...) or a string literal instead")
     @discardableResult
     func snapshot(from repoId: String, revision: String = "main", matching globs: [String] = [], progressHandler: @escaping (Progress, Double?) -> Void) async throws -> URL {
         try await snapshot(from: Repo(id: repoId), revision: revision, matching: globs, progressHandler: progressHandler)
@@ -699,6 +704,7 @@ public extension HubApi {
         try await snapshot(from: repo, revision: revision, matching: [glob], progressHandler: progressHandler)
     }
 
+    @available(*, deprecated, message: "Use snapshot(from: Repo(id:), ...) or a string literal instead")
     @discardableResult
     func snapshot(from repoId: String, revision: String = "main", matching glob: String, progressHandler: @escaping (Progress, Double?) -> Void) async throws -> URL {
         try await snapshot(from: Repo(id: repoId), revision: revision, matching: [glob], progressHandler: progressHandler)
@@ -812,6 +818,7 @@ public extension HubApi {
         return selectedMetadata
     }
 
+    @available(*, deprecated, message: "Use getFileMetadata(from: Repo(id:), ...) or a string literal instead")
     func getFileMetadata(from repoId: String, revision: String = "main", matching globs: [String] = []) async throws -> [FileMetadata] {
         try await getFileMetadata(from: Repo(id: repoId), revision: revision, matching: globs)
     }
@@ -820,6 +827,7 @@ public extension HubApi {
         try await getFileMetadata(from: repo, revision: revision, matching: [glob])
     }
 
+    @available(*, deprecated, message: "Use getFileMetadata(from: Repo(id:), ...) or a string literal instead")
     func getFileMetadata(from repoId: String, revision: String = "main", matching glob: String) async throws -> [FileMetadata] {
         try await getFileMetadata(from: Repo(id: repoId), revision: revision, matching: [glob])
     }
@@ -896,12 +904,7 @@ public extension Hub {
     }
 
     /// Retrieves filenames from a repository by ID using the shared Hub API instance.
-    ///
-    /// - Parameters:
-    ///   - repoId: The repository ID to query
-    ///   - globs: Array of glob patterns to filter files (defaults to all files)
-    /// - Returns: Array of matching filenames
-    /// - Throws: HubClientError if the operation fails
+    @available(*, deprecated, message: "Use getFilenames(from: Repo(id:), ...) or a string literal instead")
     static func getFilenames(from repoId: String, matching globs: [String] = []) async throws -> [String] {
         try await HubApi.shared.getFilenames(from: Repo(id: repoId), matching: globs)
     }
@@ -918,12 +921,7 @@ public extension Hub {
     }
 
     /// Retrieves filenames from a repository by ID matching a single glob pattern.
-    ///
-    /// - Parameters:
-    ///   - repoId: The repository ID to query
-    ///   - glob: The glob pattern to filter files
-    /// - Returns: Array of matching filenames
-    /// - Throws: HubClientError if the operation fails
+    @available(*, deprecated, message: "Use getFilenames(from: Repo(id:), ...) or a string literal instead")
     static func getFilenames(from repoId: String, matching glob: String) async throws -> [String] {
         try await HubApi.shared.getFilenames(from: Repo(id: repoId), matching: glob)
     }
@@ -940,6 +938,7 @@ public extension Hub {
         try await HubApi.shared.snapshot(from: repo, matching: globs, progressHandler: progressHandler)
     }
 
+    @available(*, deprecated, message: "Use snapshot(from: Repo(id:), ...) or a string literal instead")
     static func snapshot(from repoId: String, matching globs: [String] = [], progressHandler: @escaping (Progress) -> Void = { _ in }) async throws
         -> URL
     {
@@ -950,6 +949,7 @@ public extension Hub {
         try await HubApi.shared.snapshot(from: repo, matching: glob, progressHandler: progressHandler)
     }
 
+    @available(*, deprecated, message: "Use snapshot(from: Repo(id:), ...) or a string literal instead")
     static func snapshot(from repoId: String, matching glob: String, progressHandler: @escaping (Progress) -> Void = { _ in }) async throws -> URL {
         try await HubApi.shared.snapshot(from: Repo(id: repoId), matching: glob, progressHandler: progressHandler)
     }
@@ -959,6 +959,7 @@ public extension Hub {
         try await HubApi.shared.snapshot(from: repo, matching: globs, progressHandler: progressHandler)
     }
 
+    @available(*, deprecated, message: "Use snapshot(from: Repo(id:), ...) or a string literal instead")
     static func snapshot(from repoId: String, matching globs: [String] = [], progressHandler: @escaping (Progress, Double?) -> Void) async throws -> URL {
         try await HubApi.shared.snapshot(from: Repo(id: repoId), matching: globs, progressHandler: progressHandler)
     }
@@ -967,6 +968,7 @@ public extension Hub {
         try await HubApi.shared.snapshot(from: repo, matching: glob, progressHandler: progressHandler)
     }
 
+    @available(*, deprecated, message: "Use snapshot(from: Repo(id:), ...) or a string literal instead")
     static func snapshot(from repoId: String, matching glob: String, progressHandler: @escaping (Progress, Double?) -> Void) async throws -> URL {
         try await HubApi.shared.snapshot(from: Repo(id: repoId), matching: glob, progressHandler: progressHandler)
     }
@@ -988,6 +990,7 @@ public extension Hub {
         try await HubApi.shared.getFileMetadata(from: repo, matching: globs)
     }
 
+    @available(*, deprecated, message: "Use getFileMetadata(from: Repo(id:), ...) or a string literal instead")
     static func getFileMetadata(from repoId: String, matching globs: [String] = []) async throws -> [HubApi.FileMetadata] {
         try await HubApi.shared.getFileMetadata(from: Repo(id: repoId), matching: globs)
     }
@@ -996,6 +999,7 @@ public extension Hub {
         try await HubApi.shared.getFileMetadata(from: repo, matching: [glob])
     }
 
+    @available(*, deprecated, message: "Use getFileMetadata(from: Repo(id:), ...) or a string literal instead")
     static func getFileMetadata(from repoId: String, matching glob: String) async throws -> [HubApi.FileMetadata] {
         try await HubApi.shared.getFileMetadata(from: Repo(id: repoId), matching: [glob])
     }

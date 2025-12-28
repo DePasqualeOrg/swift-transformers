@@ -90,7 +90,12 @@ public extension Hub {
     ///
     /// A repository is identified by its unique ID and type, allowing access to
     /// different kinds of resources hosted on the Hub platform.
-    struct Repo: Codable {
+    ///
+    /// Conforms to `ExpressibleByStringLiteral` for convenient initialization:
+    /// ```swift
+    /// let repo: Repo = "microsoft/DialoGPT-medium"
+    /// ```
+    struct Repo: Codable, ExpressibleByStringLiteral {
         /// The unique identifier for the repository (e.g., "microsoft/DialoGPT-medium").
         public let id: String
         /// The type of repository (models, datasets, or spaces).
@@ -104,6 +109,13 @@ public extension Hub {
         public init(id: String, type: RepoType = .models) {
             self.id = id
             self.type = type
+        }
+
+        /// Creates a new model repository reference from a string literal.
+        ///
+        /// - Parameter value: The repository ID string
+        public init(stringLiteral value: String) {
+            self.init(id: value)
         }
     }
 }
