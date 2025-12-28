@@ -324,12 +324,23 @@ public extension HubApi {
     /// Assumes the file is already present at local url.
     /// `fileURL` is a complete local file path for the given model
     func configuration(fileURL: URL) throws -> Config {
-        let data = try Data(contentsOf: fileURL)
-        guard let parsed = try? JSONSerialization.bomPreservingJsonObject(with: data) else {
-            throw Hub.HubClientError.jsonSerialization(fileURL: fileURL, message: "JSON Serialization failed for \(fileURL). Please verify that you have set the HF_TOKEN environment variable.")
+        let filename = fileURL.lastPathComponent
+        let data = try Debug.time("Read \(filename)") {
+            try Data(contentsOf: fileURL)
         }
+        Debug.logDataSize(data, filename: filename)
+
+        let parsed = try Debug.time("Parse JSON \(filename)") {
+            guard let parsed = try? JSONSerialization.bomPreservingJsonObject(with: data) else {
+                throw Hub.HubClientError.jsonSerialization(fileURL: fileURL, message: "JSON Serialization failed for \(fileURL). Please verify that you have set the HF_TOKEN environment variable.")
+            }
+            return parsed
+        }
+
         guard let dictionary = parsed as? [NSString: Any] else { throw Hub.HubClientError.parse }
-        return Config(dictionary)
+        return Debug.time("Create Config from \(filename)") {
+            Config(dictionary)
+        }
     }
 }
 

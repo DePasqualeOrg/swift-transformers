@@ -186,6 +186,8 @@ enum TokenizerModel {
 
         // Some tokenizer_class entries use a Fast suffix
         let tokenizerName = tokenizerClassName.replacingOccurrences(of: "Fast", with: "")
+        Debug.log("Resolved tokenizer class: \(tokenizerName)")
+
         // Fallback to BPETokenizer if class is not explicitly registered
         let tokenizerClass = TokenizerModel.knownTokenizers[tokenizerName] ?? BPETokenizer.self
         if TokenizerModel.knownTokenizers[tokenizerName] == nil {
@@ -195,7 +197,9 @@ enum TokenizerModel {
                 print("Warning: Tokenizer model class \(tokenizerName) is not registered, falling back to a standard BPE implementation.")
             }
         }
-        return try tokenizerClass.init(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, addedTokens: addedTokens)
+        return try Debug.time("Initialize \(tokenizerName) model") {
+            try tokenizerClass.init(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, addedTokens: addedTokens)
+        }
     }
 }
 
@@ -489,17 +493,22 @@ public class PreTrainedTokenizer: @unchecked Sendable, Tokenizer {
     ///   - strict: Whether to enforce strict validation of tokenizer types
     /// - Throws: `TokenizerError` if configuration is invalid or tokenizer type is unsupported
     public required init(tokenizerConfig: Config, tokenizerData: Config, strict: Bool = true) throws {
+        Debug.log("Initializing PreTrainedTokenizer")
+
         var addedTokens: [String: Int] = [:]
         var specialTokens: [String: Int] = [:]
-        for addedToken in tokenizerData["addedTokens"].array(or: []) {
-            guard let id = addedToken["id"].integer() else { continue } // malformed: token with no id
-            guard let content = addedToken.content.string() else { continue } // malformed: token with no content
-            addedTokens[content] = id
+        Debug.time("Parse added tokens") {
+            for addedToken in tokenizerData["addedTokens"].array(or: []) {
+                guard let id = addedToken["id"].integer() else { continue } // malformed: token with no id
+                guard let content = addedToken.content.string() else { continue } // malformed: token with no content
+                addedTokens[content] = id
 
-            if addedToken["special"].boolean(or: false) {
-                specialTokens[content] = id
+                if addedToken["special"].boolean(or: false) {
+                    specialTokens[content] = id
+                }
             }
         }
+        Debug.log("Found \(addedTokens.count) added tokens, \(specialTokens.count) special tokens")
 
         // Convert to tuples for easier access, then sort by length (descending) to avoid early partial matches
         // (https://github.com/xenova/transformers.js/commit/c305c3824f628f1f02806a6310bd3b18b0f7f8f5)
@@ -513,25 +522,38 @@ public class PreTrainedTokenizer: @unchecked Sendable, Tokenizer {
         }
 
         // then concatenate into regular expression
-        let addedTokensRegexString = unwrappedAddedTokens.map {
-            let token = NSRegularExpression.escapedPattern(for: $0.content)
-            let prefix = $0.prefix ? #"\s*"# : ""
-            let suffix = $0.suffix ? #"\s*"# : ""
-            return "\(prefix)(\(token))\(suffix)"
-        }.joined(separator: "|")
-        addedTokensRegex = try? NSRegularExpression(pattern: addedTokensRegexString, options: [])
+        addedTokensRegex = Debug.time("Compile added tokens regex") {
+            let addedTokensRegexString = unwrappedAddedTokens.map {
+                let token = NSRegularExpression.escapedPattern(for: $0.content)
+                let prefix = $0.prefix ? #"\s*"# : ""
+                let suffix = $0.suffix ? #"\s*"# : ""
+                return "\(prefix)(\(token))\(suffix)"
+            }.joined(separator: "|")
+            return try? NSRegularExpression(pattern: addedTokensRegexString, options: [])
+        }
 
         self.specialTokens = specialTokens
         self.addedTokens = Set(addedTokens.keys)
 
-        preTokenizer = PreTokenizerFactory.fromConfig(config: tokenizerData["preTokenizer"])
-        normalizer = NormalizerFactory.fromConfig(config: tokenizerData["normalizer"])
-        postProcessor = PostProcessorFactory.fromConfig(config: tokenizerData["postProcessor"])
-        decoder = DecoderFactory.fromConfig(config: tokenizerData["decoder"], addedTokens: self.addedTokens)
+        preTokenizer = Debug.time("Create PreTokenizer") {
+            PreTokenizerFactory.fromConfig(config: tokenizerData["preTokenizer"])
+        }
+        normalizer = Debug.time("Create Normalizer") {
+            NormalizerFactory.fromConfig(config: tokenizerData["normalizer"])
+        }
+        postProcessor = Debug.time("Create PostProcessor") {
+            PostProcessorFactory.fromConfig(config: tokenizerData["postProcessor"])
+        }
+        decoder = Debug.time("Create Decoder") {
+            DecoderFactory.fromConfig(config: tokenizerData["decoder"], addedTokens: self.addedTokens)
+        }
         cleanUpTokenizationSpaces = tokenizerConfig.cleanUpTokenizationSpaces.boolean(or: true)
         self.tokenizerConfig = tokenizerConfig
 
-        model = try TokenizerModel.from(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, addedTokens: addedTokens, strict: strict)
+        model = try Debug.time("Create TokenizerModel") {
+            try TokenizerModel.from(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, addedTokens: addedTokens, strict: strict)
+        }
+        Debug.log("PreTrainedTokenizer initialization complete")
     }
 
     private func compiledTemplate(for templateString: String) throws -> Template {
@@ -881,7 +903,10 @@ public extension AutoTokenizer {
     /// - Throws: `TokenizerError` if configuration is invalid
     static func from(tokenizerConfig: Config, tokenizerData: Config, strict: Bool = true) throws -> Tokenizer {
         let tokenizerClass = tokenizerClass(for: tokenizerConfig)
-        return try tokenizerClass.init(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, strict: strict)
+        Debug.log("Using tokenizer class: \(tokenizerClass)")
+        return try Debug.time("AutoTokenizer.from (total)") {
+            try tokenizerClass.init(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, strict: strict)
+        }
     }
 
     /// Loads a tokenizer from a pre-trained model on the Hugging Face Hub.
@@ -897,9 +922,17 @@ public extension AutoTokenizer {
         hubApi: HubApi = .shared,
         strict: Bool = true
     ) async throws -> Tokenizer {
+        Debug.log("AutoTokenizer.from(pretrained: \(model))")
         let config = LanguageModelConfigurationFromHub(modelName: model, hubApi: hubApi)
-        guard let tokenizerConfig = try await config.tokenizerConfig else { throw TokenizerError.missingConfig }
-        let tokenizerData = try await config.tokenizerData
+
+        let tokenizerConfig = try await Debug.time("Load tokenizerConfig") {
+            try await config.tokenizerConfig
+        }
+        guard let tokenizerConfig else { throw TokenizerError.missingConfig }
+
+        let tokenizerData = try await Debug.time("Load tokenizerData") {
+            try await config.tokenizerData
+        }
 
         return try AutoTokenizer.from(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, strict: strict)
     }
@@ -917,9 +950,17 @@ public extension AutoTokenizer {
         hubApi: HubApi = .shared,
         strict: Bool = true
     ) async throws -> Tokenizer {
+        Debug.log("AutoTokenizer.from(modelFolder: \(modelFolder.lastPathComponent))")
         let config = LanguageModelConfigurationFromHub(modelFolder: modelFolder, hubApi: hubApi)
-        guard let tokenizerConfig = try await config.tokenizerConfig else { throw TokenizerError.missingConfig }
-        let tokenizerData = try await config.tokenizerData
+
+        let tokenizerConfig = try await Debug.time("Load tokenizerConfig") {
+            try await config.tokenizerConfig
+        }
+        guard let tokenizerConfig else { throw TokenizerError.missingConfig }
+
+        let tokenizerData = try await Debug.time("Load tokenizerData") {
+            try await config.tokenizerData
+        }
 
         return try PreTrainedTokenizer(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData, strict: strict)
     }

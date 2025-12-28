@@ -221,11 +221,15 @@ public final class LanguageModelConfigurationFromHub: Sendable {
         revision: String,
         hubApi: HubApi = .shared
     ) async throws -> Configurations {
+        Debug.log("Loading config for model: \(modelName) (revision: \(revision))")
         let filesToDownload = ["config.json", "tokenizer_config.json", "chat_template.jinja", "chat_template.json", "tokenizer.json"]
         let repo = Hub.Repo(id: modelName)
 
         do {
-            let downloadedModelFolder = try await hubApi.snapshot(from: repo, revision: revision, matching: filesToDownload)
+            let downloadedModelFolder = try await Debug.time("Download snapshot for \(modelName)") {
+                try await hubApi.snapshot(from: repo, revision: revision, matching: filesToDownload)
+            }
+            Debug.log("Downloaded to: \(downloadedModelFolder.path)")
             return try await loadConfig(modelFolder: downloadedModelFolder, hubApi: hubApi)
         } catch {
             // Convert generic errors to more specific ones
@@ -248,6 +252,7 @@ public final class LanguageModelConfigurationFromHub: Sendable {
         modelFolder: URL,
         hubApi: HubApi = .shared
     ) async throws -> Configurations {
+        Debug.log("Loading config from folder: \(modelFolder.lastPathComponent)")
         do {
             // Load required configurations
             let modelConfigURL = modelFolder.appending(path: "config.json")
@@ -255,6 +260,8 @@ public final class LanguageModelConfigurationFromHub: Sendable {
             var modelConfig: Config? = nil
             if FileManager.default.fileExists(atPath: modelConfigURL.path) {
                 modelConfig = try hubApi.configuration(fileURL: modelConfigURL)
+            } else {
+                Debug.log("config.json not found, skipping")
             }
 
             let tokenizerDataURL = modelFolder.appending(path: "tokenizer.json")
@@ -269,6 +276,8 @@ public final class LanguageModelConfigurationFromHub: Sendable {
             let tokenizerConfigURL = modelFolder.appending(path: "tokenizer_config.json")
             if FileManager.default.fileExists(atPath: tokenizerConfigURL.path) {
                 tokenizerConfig = try hubApi.configuration(fileURL: tokenizerConfigURL)
+            } else {
+                Debug.log("tokenizer_config.json not found, skipping")
             }
 
             // Check for chat template and merge if available
@@ -278,13 +287,15 @@ public final class LanguageModelConfigurationFromHub: Sendable {
             let chatTemplateJsonURL = modelFolder.appending(path: "chat_template.json")
 
             if FileManager.default.fileExists(atPath: chatTemplateJinjaURL.path) {
-                // Try to load .jinja template as plain text
+                Debug.log("Loading chat_template.jinja")
                 chatTemplate = try? String(contentsOf: chatTemplateJinjaURL, encoding: .utf8)
             } else if FileManager.default.fileExists(atPath: chatTemplateJsonURL.path),
                 let chatTemplateConfig = try? hubApi.configuration(fileURL: chatTemplateJsonURL)
             {
-                // Fall back to .json template
+                Debug.log("Loading chat_template.json")
                 chatTemplate = chatTemplateConfig.chatTemplate.string()
+            } else {
+                Debug.log("No chat template found")
             }
 
             if let chatTemplate {
@@ -297,6 +308,7 @@ public final class LanguageModelConfigurationFromHub: Sendable {
                 }
             }
 
+            Debug.log("Config loading complete")
             return Configurations(
                 modelConfig: modelConfig,
                 tokenizerConfig: tokenizerConfig,
