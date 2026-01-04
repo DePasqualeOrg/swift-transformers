@@ -325,7 +325,14 @@ public extension HubApi {
     /// `fileURL` is a complete local file path for the given model
     func configuration(fileURL: URL) throws -> Config {
         let data = try Data(contentsOf: fileURL)
-        return try YYJSONParser.bomPreservingParseToConfig(data)
+        do {
+            return try YYJSONParser.bomPreservingParseToConfig(data)
+        } catch {
+            throw Hub.HubClientError.jsonSerialization(
+                fileURL: fileURL,
+                message: "JSON parsing failed for \(fileURL): \(error.localizedDescription). If this is a private model, verify that HF_TOKEN is set."
+            )
+        }
     }
 }
 
