@@ -46,7 +46,7 @@ enum YYJSONParser {
             let doc = yyjson_read_opts(
                 UnsafeMutableRawPointer(mutating: baseAddress).assumingMemoryBound(to: CChar.self),
                 buffer.count,
-                YYJSON_READ_ALLOW_BOM,
+                0,
                 nil,
                 &err
             )
@@ -66,12 +66,15 @@ enum YYJSONParser {
         }
     }
 
-    /// Parses JSON data with BOM handling directly into a Config object.
+    /// Parses JSON data into a Config object, preserving BOM characters in strings.
     ///
-    /// Note: yyjson with YYJSON_READ_ALLOW_BOM handles BOM correctly without
-    /// the duplication workaround needed for JSONSerialization.
+    /// Unlike Foundation's `JSONSerialization`, yyjson correctly preserves BOM
+    /// characters (`\u{feff}`) within string values. This matters for tokenizers
+    /// like Gemma that use BOM as a token prefix (e.g., `"\u{feff}#"`).
+    ///
+    /// See: https://github.com/huggingface/swift-transformers/issues/116
     static func bomPreservingParseToConfig(_ data: Data) throws -> Config {
-        return try parseToConfig(data)
+        try parseToConfig(data)
     }
 
     // MARK: - Direct Config conversion
