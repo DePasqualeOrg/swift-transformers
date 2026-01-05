@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let logger = Logger()
 
 /// A file-based lock for coordinating access to shared resources.
 ///
@@ -27,13 +30,21 @@ public struct FileLock: Sendable {
     /// Delay between retry attempts in seconds.
     public let retryDelay: TimeInterval
 
+    /// Interval between log messages while waiting for a lock.
+    private static let logInterval: Int = 10
+
     /// Creates a file lock at the specified lock file path.
     ///
     /// - Parameters:
     ///   - lockPath: The path where the lock file will be created.
-    ///   - maxRetries: Maximum number of lock acquisition attempts. Defaults to 5.
+    ///   - maxRetries: Maximum number of lock acquisition attempts. Defaults to 600 (10 minutes with 1s delay).
     ///   - retryDelay: Delay between retry attempts in seconds. Defaults to 1.0.
-    public init(lockPath: URL, maxRetries: Int = 5, retryDelay: TimeInterval = 1.0) {
+    ///
+    /// The default timeout is generous because the lock is held during file downloads,
+    /// which can take minutes for large models. Python's `huggingface_hub` uses `WeakFileLock`
+    /// which waits indefinitely by default and logs every 10 seconds while waiting. We use a
+    /// 10-minute timeout as a practical upper bound while matching the logging behavior.
+    public init(lockPath: URL, maxRetries: Int = 600, retryDelay: TimeInterval = 1.0) {
         self.lockPath = lockPath
         self.maxRetries = maxRetries
         self.retryDelay = retryDelay
@@ -92,10 +103,15 @@ public struct FileLock: Sendable {
 
     private func acquireLock() throws -> FileHandle {
         let handle = try prepareLockFile()
+        let startTime = CFAbsoluteTimeGetCurrent()
 
         for attempt in 0...maxRetries {
             if tryLock(handle) { return handle }
             if attempt < maxRetries {
+                if attempt > 0, attempt % Self.logInterval == 0 {
+                    let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                    logger.info("Waiting for lock on \(self.lockPath.lastPathComponent) (elapsed: \(String(format: "%.1f", elapsed))s)")
+                }
                 Thread.sleep(forTimeInterval: retryDelay)
             }
         }
@@ -106,10 +122,15 @@ public struct FileLock: Sendable {
 
     private func acquireLockAsync() async throws -> FileHandle {
         let handle = try prepareLockFile()
+        let startTime = CFAbsoluteTimeGetCurrent()
 
         for attempt in 0...maxRetries {
             if tryLock(handle) { return handle }
             if attempt < maxRetries {
+                if attempt > 0, attempt % Self.logInterval == 0 {
+                    let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                    logger.info("Waiting for lock on \(self.lockPath.lastPathComponent) (elapsed: \(String(format: "%.1f", elapsed))s)")
+                }
                 try await Task.sleep(for: .seconds(retryDelay))
             }
         }
