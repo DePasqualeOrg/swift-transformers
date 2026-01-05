@@ -223,10 +223,10 @@ class BPETokenizer: PreTrainedTokenizerModel, @unchecked Sendable {
         }
 
         eosToken = addedTokenAsString(tokenizerConfig.eosToken)
-        eosTokenId = eosToken == nil ? nil : tokensToIds[eosToken! as NSString]
+        eosTokenId = eosToken.flatMap { tokensToIds[$0 as NSString] }
 
         bosToken = addedTokenAsString(tokenizerConfig.bosToken)
-        bosTokenId = bosToken == nil ? nil : tokensToIds[bosToken! as NSString]
+        bosTokenId = bosToken.flatMap { tokensToIds[$0 as NSString] }
 
         fuseUnknownTokens = tokenizerConfig.fuseUnk.boolean(or: false)
     }
@@ -261,10 +261,10 @@ class BPETokenizer: PreTrainedTokenizerModel, @unchecked Sendable {
         }
 
         eosToken = addedTokenAsString(tokenizerConfig.eosToken)
-        eosTokenId = eosToken == nil ? nil : tokensToIds[eosToken! as NSString]
+        eosTokenId = eosToken.flatMap { tokensToIds[$0 as NSString] }
 
         bosToken = addedTokenAsString(tokenizerConfig.bosToken)
-        bosTokenId = bosToken == nil ? nil : tokensToIds[bosToken! as NSString]
+        bosTokenId = bosToken.flatMap { tokensToIds[$0 as NSString] }
 
         fuseUnknownTokens = tokenizerConfig.fuseUnk.boolean(or: false)
     }
@@ -292,10 +292,10 @@ class BPETokenizer: PreTrainedTokenizerModel, @unchecked Sendable {
         }
 
         eosToken = addedTokenAsString(tokenizerConfig.eosToken)
-        eosTokenId = eosToken == nil ? nil : tokensToIds[eosToken! as NSString]
+        eosTokenId = eosToken.flatMap { tokensToIds[$0 as NSString] }
 
         bosToken = addedTokenAsString(tokenizerConfig.bosToken)
-        bosTokenId = bosToken == nil ? nil : tokensToIds[bosToken! as NSString]
+        bosTokenId = bosToken.flatMap { tokensToIds[$0 as NSString] }
 
         fuseUnknownTokens = tokenizerConfig.fuseUnk.boolean(or: false)
     }
