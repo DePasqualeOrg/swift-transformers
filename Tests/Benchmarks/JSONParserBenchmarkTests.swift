@@ -143,9 +143,11 @@ struct JSONParserBenchmarkTests {
     @Test
     func compareParsingSpeed() throws {
         let iterations = 50
-        let labelWidth = 25
+        let labelWidth = 30
 
         print("Benchmarking with \(iterations) iterations...\n")
+
+        let tokenizerURL = modelFolder.appending(path: "tokenizer.json")
 
         let yyjsonRawTimes = measure(label: "yyjson (raw)", labelWidth: labelWidth, iterations: iterations) {
             benchmarkData.withUnsafeBytes { buffer in
@@ -156,6 +158,10 @@ struct JSONParserBenchmarkTests {
 
         let yyjsonConfigTimes = try measure(label: "yyjson -> Config", labelWidth: labelWidth, iterations: iterations) {
             let _ = try YYJSONParser.parseToConfig(benchmarkData)
+        }
+
+        let yyjsonInsituTimes = try measure(label: "yyjson -> Config (in-situ)", labelWidth: labelWidth, iterations: iterations) {
+            let _ = try YYJSONParser.parseFileToConfig(tokenizerURL)
         }
 
         let jsonSerRawTimes = try measure(label: "JSONSerialization (raw)", labelWidth: labelWidth, iterations: iterations) {
@@ -169,13 +175,17 @@ struct JSONParserBenchmarkTests {
 
         let yyjsonRawStats = stats(yyjsonRawTimes)
         let yyjsonConfigStats = stats(yyjsonConfigTimes)
+        let yyjsonInsituStats = stats(yyjsonInsituTimes)
         let jsonSerRawStats = stats(jsonSerRawTimes)
         let jsonSerConfigStats = stats(jsonSerConfigTimes)
 
         let rawSpeedup = jsonSerRawStats.mean / yyjsonRawStats.mean
         let configSpeedup = jsonSerConfigStats.mean / yyjsonConfigStats.mean
+        let insituSpeedup = yyjsonConfigStats.mean / yyjsonInsituStats.mean
+        let insituVsJsonSer = jsonSerConfigStats.mean / yyjsonInsituStats.mean
         let rawTimeSaved = jsonSerRawStats.mean - yyjsonRawStats.mean
         let configTimeSaved = jsonSerConfigStats.mean - yyjsonConfigStats.mean
+        let insituTimeSaved = yyjsonConfigStats.mean - yyjsonInsituStats.mean
 
         print(
             """
@@ -184,13 +194,16 @@ struct JSONParserBenchmarkTests {
             JSON Parsing Benchmark Results (\(iterations) iterations)
             File size: \(ByteCountFormatter.string(fromByteCount: Int64(benchmarkData.count), countStyle: .file))
             ============================================
-            yyjson (raw parse):       \(yyjsonRawStats.formatted)
-            yyjson -> Config:         \(yyjsonConfigStats.formatted)
-            JSONSerialization (raw):  \(jsonSerRawStats.formatted)
-            JSONSerialization+Config: \(jsonSerConfigStats.formatted)
+            yyjson (raw parse):         \(yyjsonRawStats.formatted)
+            yyjson -> Config:           \(yyjsonConfigStats.formatted)
+            yyjson -> Config (in-situ): \(yyjsonInsituStats.formatted)
+            JSONSerialization (raw):    \(jsonSerRawStats.formatted)
+            JSONSerialization+Config:   \(jsonSerConfigStats.formatted)
             --------------------------------------------
-            Raw parse speedup:        \(String(format: "%.2f", rawSpeedup))x (\(String(format: "%.0f", rawTimeSaved)) ms saved)
-            Full path speedup:        \(String(format: "%.2f", configSpeedup))x (\(String(format: "%.0f", configTimeSaved)) ms saved)
+            Raw parse speedup:          \(String(format: "%.2f", rawSpeedup))x vs JSONSerialization (\(String(format: "%.0f", rawTimeSaved)) ms saved)
+            Full path speedup:          \(String(format: "%.2f", configSpeedup))x vs JSONSerialization (\(String(format: "%.0f", configTimeSaved)) ms saved)
+            In-situ vs standard:        \(String(format: "%.2f", insituSpeedup))x faster (\(String(format: "%.0f", insituTimeSaved)) ms saved)
+            In-situ vs JSONSer+Config:  \(String(format: "%.2f", insituVsJsonSer))x faster
             ============================================
 
             """)
