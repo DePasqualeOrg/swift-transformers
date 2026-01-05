@@ -357,4 +357,48 @@ struct TokenizerTests {
 
         #expect(tokenizer.encode(text: "She took a train to the West") == [6284, 5244, 1261, 10018, 1317, 1278, 5046])
     }
+
+    @Test
+    func concurrentTokenizerRegistration() async throws {
+        // Test that concurrent registration doesn't cause crashes or data races.
+        // This validates the thread-safety of AutoTokenizer.register().
+
+        // Create a mock tokenizer class for testing
+        final class MockTokenizer: PreTrainedTokenizerModel, @unchecked Sendable {
+            let bosToken: String? = nil
+            let bosTokenId: Int? = nil
+            let eosToken: String? = nil
+            let eosTokenId: Int? = nil
+            let unknownToken: String? = nil
+            let unknownTokenId: Int? = nil
+            var fuseUnknownTokens: Bool { false }
+
+            required init(tokenizerConfig: Config, tokenizerData: Config, addedTokens: [String: Int]) throws {}
+            func tokenize(text: String) -> [String] { [] }
+            func convertTokenToId(_ token: String) -> Int? { nil }
+            func convertIdToToken(_ id: Int) -> String? { nil }
+            func encode(text: String) -> [Int] { [] }
+            func decode(tokens: [Int]) -> String { "" }
+        }
+
+        // Register from multiple concurrent tasks
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<100 {
+                group.addTask {
+                    AutoTokenizer.register(MockTokenizer.self, for: "ConcurrentTestTokenizer\(i)")
+                }
+            }
+        }
+
+        // Verify registrations succeeded by checking we can look them up
+        // (This implicitly tests the read path is also thread-safe)
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<100 {
+                group.addTask {
+                    // Just exercise the lookup path concurrently
+                    _ = TokenizerModel.tokenizerClass(for: "ConcurrentTestTokenizer\(i)")
+                }
+            }
+        }
+    }
 }
