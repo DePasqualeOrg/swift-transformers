@@ -137,9 +137,13 @@ public actor LanguageModelConfigurationFromHub {
     ///   - modelName: The name/ID of the model repository (e.g., "microsoft/DialoGPT-medium")
     ///   - revision: The git revision to use (defaults to "main")
     ///   - hubApi: The Hub API client to use (defaults to shared instance)
-    ///   - stripVocabForPerformance: If true, strips vocab/merges from tokenizerData for faster
-    ///     Config conversion. Use tokenizerVocab/tokenizerMerges properties instead. Defaults to
-    ///     false for backward compatibility.
+    ///   - stripVocabForPerformance: When `true`, removes `vocab` and `merges` from
+    ///     `tokenizerData.model` after extraction, speeding up Config conversion by avoiding
+    ///     300k+ nested Config object creations.
+    ///     - `true`: ~3x faster loading, but `tokenizerData.model.vocab` will be empty.
+    ///       Use `tokenizerVocab` and `tokenizerMerges` properties instead.
+    ///     - `false` (default): Full compatibility with existing code that accesses
+    ///       `tokenizerData.model.vocab` directly, but slower loading.
     public init(
         modelName: String,
         revision: String = "main",
@@ -155,9 +159,13 @@ public actor LanguageModelConfigurationFromHub {
     /// - Parameters:
     ///   - modelFolder: The local directory containing model configuration files
     ///   - hubApi: The Hub API client to use for parsing configurations (defaults to shared instance)
-    ///   - stripVocabForPerformance: If true, strips vocab/merges from tokenizerData for faster
-    ///     Config conversion. Use tokenizerVocab/tokenizerMerges properties instead. Defaults to
-    ///     false for backward compatibility.
+    ///   - stripVocabForPerformance: When `true`, removes `vocab` and `merges` from
+    ///     `tokenizerData.model` after extraction, speeding up Config conversion by avoiding
+    ///     300k+ nested Config object creations.
+    ///     - `true`: ~3x faster loading, but `tokenizerData.model.vocab` will be empty.
+    ///       Use `tokenizerVocab` and `tokenizerMerges` properties instead.
+    ///     - `false` (default): Full compatibility with existing code that accesses
+    ///       `tokenizerData.model.vocab` directly, but slower loading.
     public init(
         modelFolder: URL,
         hubApi: HubApi = .shared,
