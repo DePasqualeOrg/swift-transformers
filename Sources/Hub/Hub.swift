@@ -127,7 +127,7 @@ public actor LanguageModelConfigurationFromHub {
     // Cached values (populated once during load)
     private var _modelConfig: Config?
     private var _tokenizerConfig: Config?
-    private var _tokenizerData: Config!
+    private var _tokenizerData: Config?
     private var _tokenizerVocab: Any?
     private var _tokenizerMerges: [Any]?
 
@@ -217,7 +217,10 @@ public actor LanguageModelConfigurationFromHub {
     public var tokenizerData: Config {
         get async throws {
             try await ensureLoaded()
-            return _tokenizerData
+            guard let data = _tokenizerData else {
+                throw Hub.HubClientError.configurationMissing("tokenizer.json")
+            }
+            return data
         }
     }
 
@@ -368,7 +371,10 @@ public actor LanguageModelConfigurationFromHub {
             }
 
             // Convert dict to Config (fast if stripped, slower if not)
-            let tokenizerData = Config(parsed as! [NSString: Any])
+            guard let parsedDict = parsed as? [NSString: Any] else {
+                throw Hub.HubClientError.parseError("Expected JSON object at root of tokenizer.json")
+            }
+            let tokenizerData = Config(parsedDict)
 
             // Load tokenizer config (optional)
             var tokenizerConfig: Config? = nil
