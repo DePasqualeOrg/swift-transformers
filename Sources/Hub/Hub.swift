@@ -27,6 +27,18 @@ public enum TokenizerVocab: @unchecked Sendable {
     case unigram(NSArray)
 }
 
+/// Merge rules extracted from tokenizer.json for fast BPE initialization.
+///
+/// - Note: `@unchecked Sendable` is safe because the underlying data is immutable after extraction from JSON.
+public struct TokenizerMerges: @unchecked Sendable {
+    /// The raw merge rules as extracted from JSON.
+    public let rules: [Any]
+
+    public init(_ rules: [Any]) {
+        self.rules = rules
+    }
+}
+
 public extension Hub {
     /// Errors that can occur during Hub client operations.
     ///
@@ -142,7 +154,7 @@ public actor LanguageModelConfigurationFromHub {
     private var _tokenizerConfig: Config?
     private var _tokenizerData: Config?
     private var _tokenizerVocab: TokenizerVocab?
-    private var _tokenizerMerges: [Any]?
+    private var _tokenizerMerges: TokenizerMerges?
 
     /// Initializes configuration loading from a remote Hub repository.
     ///
@@ -257,8 +269,8 @@ public actor LanguageModelConfigurationFromHub {
         }
     }
 
-    /// Raw merges array extracted directly from JSON for fast BPE tokenizer initialization.
-    public var tokenizerMerges: [Any]? {
+    /// Merge rules extracted directly from JSON for fast BPE tokenizer initialization.
+    public var tokenizerMerges: TokenizerMerges? {
         get async throws {
             try await ensureLoaded()
             return _tokenizerMerges
@@ -281,7 +293,7 @@ public actor LanguageModelConfigurationFromHub {
         var tokenizerConfig: Config?
         var tokenizerData: Config
         var tokenizerVocab: TokenizerVocab?
-        var tokenizerMerges: [Any]?
+        var tokenizerMerges: TokenizerMerges?
     }
 
     /// Resolves tokenizerConfig with fallback logic.
@@ -373,7 +385,7 @@ public actor LanguageModelConfigurationFromHub {
 
             // Extract vocab/merges for fast tokenizer initialization (BPE and Unigram)
             var tokenizerVocab: TokenizerVocab? = nil
-            var tokenizerMerges: [Any]? = nil
+            var tokenizerMerges: TokenizerMerges? = nil
 
             if let modelDict = parsed["model"] as? NSDictionary {
                 let model = NSMutableDictionary(dictionary: modelDict)
@@ -382,7 +394,9 @@ public actor LanguageModelConfigurationFromHub {
                 // Only extract and strip for BPE and Unigram models
                 if modelType == "BPE", let vocab = model["vocab"] as? NSDictionary {
                     tokenizerVocab = .bpe(vocab)
-                    tokenizerMerges = model["merges"] as? [Any]
+                    if let merges = model["merges"] as? [Any] {
+                        tokenizerMerges = TokenizerMerges(merges)
+                    }
 
                     // Only strip if opted in (for backward compatibility)
                     if stripVocabForPerformance {

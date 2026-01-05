@@ -228,7 +228,7 @@ enum TokenizerModel {
         tokenizerData: Config,
         addedTokens: [String: Int],
         tokenizerVocab: TokenizerVocab?,
-        tokenizerMerges: [Any]?,
+        tokenizerMerges: TokenizerMerges?,
         strict: Bool = true
     ) throws -> TokenizingModel {
         guard let tokenizerClassName = tokenizerConfig.tokenizerClass.string() else {
@@ -250,7 +250,7 @@ enum TokenizerModel {
         // Note: includes empty subclasses (creates BPETokenizer instance)
         if tokenizerClass is BPETokenizer.Type,
             case .bpe(let rawVocab) = tokenizerVocab,
-            let rawMerges = tokenizerMerges
+            let rawMerges = tokenizerMerges?.rules
         {
             return try BPETokenizer(
                 tokenizerConfig: tokenizerConfig,
@@ -285,7 +285,7 @@ enum TokenizerModel {
         tokenizerData: Config,
         addedTokens: [String: Int],
         tokenizerVocab: TokenizerVocab?,
-        tokenizerMerges: [Any]?,
+        tokenizerMerges: TokenizerMerges?,
         strict: Bool = true
     ) async throws -> TokenizingModel {
         guard let tokenizerClassName = tokenizerConfig.tokenizerClass.string() else {
@@ -307,7 +307,7 @@ enum TokenizerModel {
         // Note: includes empty subclasses (creates BPETokenizer instance)
         if tokenizerClass is BPETokenizer.Type,
             case .bpe(let rawVocab) = tokenizerVocab,
-            let rawMerges = tokenizerMerges
+            let rawMerges = tokenizerMerges?.rules
         {
             return await BPETokenizer.createAsync(
                 tokenizerConfig: tokenizerConfig,
@@ -628,7 +628,7 @@ public class PreTrainedTokenizer: @unchecked Sendable, Tokenizer {
         tokenizerConfig: Config,
         tokenizerData: Config,
         tokenizerVocab: TokenizerVocab? = nil,
-        tokenizerMerges: [Any]? = nil,
+        tokenizerMerges: TokenizerMerges? = nil,
         strict: Bool = true
     ) throws {
         var addedTokens: [String: Int] = [:]
@@ -751,7 +751,7 @@ public class PreTrainedTokenizer: @unchecked Sendable, Tokenizer {
         tokenizerConfig: Config,
         tokenizerData: Config,
         tokenizerVocab: TokenizerVocab?,
-        tokenizerMerges: [Any]?,
+        tokenizerMerges: TokenizerMerges?,
         strict: Bool = true
     ) async throws -> PreTrainedTokenizer {
         // Parse addedTokens (small data, used for model init)
@@ -1202,7 +1202,7 @@ public extension AutoTokenizer {
         tokenizerConfig: Config,
         tokenizerData: Config,
         tokenizerVocab: TokenizerVocab?,
-        tokenizerMerges: [Any]?,
+        tokenizerMerges: TokenizerMerges?,
         strict: Bool = true
     ) throws -> Tokenizer {
         let tokenizerClass = tokenizerClass(for: tokenizerConfig)
@@ -1220,7 +1220,7 @@ public extension AutoTokenizer {
         tokenizerConfig: Config,
         tokenizerData: Config,
         tokenizerVocab: TokenizerVocab?,
-        tokenizerMerges: [Any]?,
+        tokenizerMerges: TokenizerMerges?,
         strict: Bool = true
     ) async throws -> Tokenizer {
         let selectedClass = tokenizerClass(for: tokenizerConfig)
@@ -1294,7 +1294,7 @@ class LlamaPreTrainedTokenizer: PreTrainedTokenizer, @unchecked Sendable {
         tokenizerConfig: Config,
         tokenizerData: Config,
         tokenizerVocab: TokenizerVocab? = nil,
-        tokenizerMerges: [Any]? = nil,
+        tokenizerMerges: TokenizerMerges? = nil,
         strict: Bool = true
     ) throws {
         isLegacy = tokenizerConfig.legacy.boolean(or: true)
@@ -1328,7 +1328,7 @@ class LlamaPreTrainedTokenizer: PreTrainedTokenizer, @unchecked Sendable {
         tokenizerConfig: Config,
         tokenizerData: Config,
         tokenizerVocab: TokenizerVocab?,
-        tokenizerMerges: [Any]?,
+        tokenizerMerges: TokenizerMerges?,
         strict: Bool = true
     ) async throws -> PreTrainedTokenizer {
         let isLegacy = tokenizerConfig.legacy.boolean(or: true)
