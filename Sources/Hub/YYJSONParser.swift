@@ -17,6 +17,7 @@ enum YYJSONParser {
     enum ParseError: Error, LocalizedError {
         case readFailed(code: UInt32, message: String, position: Int)
         case nullDocument
+        case fileReadFailed(path: String)
 
         var errorDescription: String? {
             switch self {
@@ -24,8 +25,71 @@ enum YYJSONParser {
                 return "yyjson read failed (code \(code)) at position \(position): \(message)"
             case .nullDocument:
                 return "yyjson returned null document"
+            case .fileReadFailed(let path):
+                return "Failed to read file at: \(path)"
             }
         }
+    }
+
+    /// Parses a JSON file directly into a Config object using in-situ parsing.
+    ///
+    /// In-situ parsing modifies the input buffer in place, allowing strings to reference
+    /// the original buffer directly rather than allocating copies. This reduces memory usage
+    /// for large JSON files.
+    ///
+    /// - Parameter fileURL: The URL of the JSON file to parse.
+    /// - Returns: A Config object.
+    /// - Throws: ``ParseError`` if parsing fails.
+    static func parseFileToConfig(_ fileURL: URL) throws -> Config {
+        let path = fileURL.path
+        let fd = open(path, O_RDONLY)
+        guard fd >= 0 else {
+            throw ParseError.fileReadFailed(path: path)
+        }
+        defer { close(fd) }
+
+        var statInfo = stat()
+        guard fstat(fd, &statInfo) == 0 else {
+            throw ParseError.fileReadFailed(path: path)
+        }
+        let fileSize = Int(statInfo.st_size)
+
+        guard fileSize > 0 else {
+            throw ParseError.readFailed(code: 0, message: "empty file", position: 0)
+        }
+
+        let paddedSize = fileSize + Int(YYJSON_PADDING_SIZE)
+        let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: paddedSize)
+        defer { buffer.deallocate() }
+
+        let bytesRead = read(fd, buffer, fileSize)
+        guard bytesRead == fileSize else {
+            throw ParseError.fileReadFailed(path: path)
+        }
+
+        memset(buffer + fileSize, 0, Int(YYJSON_PADDING_SIZE))
+
+        var err = yyjson_read_err()
+        let doc = yyjson_read_opts(
+            buffer,
+            fileSize,
+            YYJSON_READ_INSITU,
+            nil,
+            &err
+        )
+
+        guard let doc = doc else {
+            let message = err.msg.map { String(cString: $0) } ?? "unknown error"
+            throw ParseError.readFailed(code: err.code, message: message, position: err.pos)
+        }
+
+        defer { yyjson_doc_free(doc) }
+
+        guard let root = yyjson_doc_get_root(doc) else {
+            throw ParseError.nullDocument
+        }
+
+        return convertToConfig(root)
     }
 
     /// Parses JSON data directly into a Config object.
