@@ -14,6 +14,8 @@ import Hub
 /// BPE tokenizers learn to merge the most frequently occurring pairs of characters
 /// or character sequences. This implementation supports various BPE-based models
 /// including GPT-2, RoBERTa, and other transformer models.
+///
+/// - Note: `@unchecked Sendable` is safe because all stored properties are immutable.
 class BPETokenizer: PreTrainedTokenizerModel, @unchecked Sendable {
     /// Merge ranks stored as packed token ID pairs for fast integer hashing.
     /// Key is `(idA << 32) | idB`, value is the merge rank.
