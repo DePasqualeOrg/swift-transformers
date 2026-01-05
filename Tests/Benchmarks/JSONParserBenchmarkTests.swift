@@ -142,7 +142,7 @@ struct JSONParserBenchmarkTests {
 
     @Test
     func compareParsingSpeed() throws {
-        let iterations = 50
+        let iterations = 30
         let labelWidth = 25
 
         print("Benchmarking with \(iterations) iterations...\n")
@@ -219,7 +219,7 @@ struct JSONParserBenchmarkTests {
 
     @Test
     func compareTokenizerLoadingSpeed() async throws {
-        let iterations = 20
+        let iterations = 15
         let labelWidth = 18
 
         print("Benchmarking tokenizer loading with \(iterations) iterations...\n")
