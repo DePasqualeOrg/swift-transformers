@@ -4,6 +4,9 @@
 //  Benchmark tests to measure performance improvements.
 //  Run these before and after optimization commits to compare.
 //
+//  TODO: Rebase on tokenizer optimization PRs after merging.
+//  TODO: Move benchmark tests to Benchmarks target to exclude from CI.
+//
 
 import XCTest
 
