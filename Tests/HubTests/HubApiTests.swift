@@ -225,11 +225,7 @@ class SnapshotDownloadTests: XCTestCase {
     override func setUp() {}
 
     override func tearDown() {
-        do {
-            try FileManager.default.removeItem(at: downloadDestination)
-        } catch {
-            print("Can't remove test download destination \(downloadDestination), error: \(error)")
-        }
+        try? FileManager.default.removeItem(at: downloadDestination)
     }
 
     func getRelativeFiles(url: URL, repo: String) -> [String] {
