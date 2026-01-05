@@ -226,7 +226,7 @@ enum TokenizerModel {
         tokenizerConfig: Config,
         tokenizerData: Config,
         addedTokens: [String: Int],
-        tokenizerVocab: Any?,
+        tokenizerVocab: TokenizerVocab?,
         tokenizerMerges: [Any]?,
         strict: Bool = true
     ) throws -> TokenizingModel {
@@ -248,7 +248,7 @@ enum TokenizerModel {
         // Use fast path for BPE if we have raw vocab and merges
         // Note: includes empty subclasses (creates BPETokenizer instance)
         if tokenizerClass is BPETokenizer.Type,
-            let rawVocab = tokenizerVocab as? NSDictionary,
+            case .bpe(let rawVocab) = tokenizerVocab,
             let rawMerges = tokenizerMerges
         {
             return try BPETokenizer(
@@ -263,7 +263,8 @@ enum TokenizerModel {
         // Use fast path for Unigram if we have raw vocab (array format)
         // Note: includes subclasses like T5Tokenizer
         if tokenizerClass is UnigramTokenizer.Type,
-            let rawVocab = tokenizerVocab as? [[Any]]
+            case .unigram(let rawVocabArray) = tokenizerVocab,
+            let rawVocab = rawVocabArray as? [[Any]]
         {
             return try UnigramTokenizer(
                 tokenizerConfig: tokenizerConfig,
@@ -282,7 +283,7 @@ enum TokenizerModel {
         tokenizerConfig: Config,
         tokenizerData: Config,
         addedTokens: [String: Int],
-        tokenizerVocab: Any?,
+        tokenizerVocab: TokenizerVocab?,
         tokenizerMerges: [Any]?,
         strict: Bool = true
     ) async throws -> TokenizingModel {
@@ -304,7 +305,7 @@ enum TokenizerModel {
         // Use async parallel building for BPE tokenizers
         // Note: includes empty subclasses (creates BPETokenizer instance)
         if tokenizerClass is BPETokenizer.Type,
-            let rawVocab = tokenizerVocab as? NSDictionary,
+            case .bpe(let rawVocab) = tokenizerVocab,
             let rawMerges = tokenizerMerges
         {
             return await BPETokenizer.createAsync(
@@ -318,7 +319,8 @@ enum TokenizerModel {
         // Use fast path for Unigram if we have raw vocab (array format)
         // Note: includes subclasses like T5Tokenizer
         if tokenizerClass is UnigramTokenizer.Type,
-            let rawVocab = tokenizerVocab as? [[Any]]
+            case .unigram(let rawVocabArray) = tokenizerVocab,
+            let rawVocab = rawVocabArray as? [[Any]]
         {
             return try UnigramTokenizer(
                 tokenizerConfig: tokenizerConfig,
@@ -627,7 +629,7 @@ public class PreTrainedTokenizer: @unchecked Sendable, Tokenizer {
     public required init(
         tokenizerConfig: Config,
         tokenizerData: Config,
-        tokenizerVocab: Any? = nil,
+        tokenizerVocab: TokenizerVocab? = nil,
         tokenizerMerges: [Any]? = nil,
         strict: Bool = true
     ) throws {
@@ -750,7 +752,7 @@ public class PreTrainedTokenizer: @unchecked Sendable, Tokenizer {
     class func createAsync(
         tokenizerConfig: Config,
         tokenizerData: Config,
-        tokenizerVocab: Any?,
+        tokenizerVocab: TokenizerVocab?,
         tokenizerMerges: [Any]?,
         strict: Bool = true
     ) async throws -> PreTrainedTokenizer {
@@ -1207,7 +1209,7 @@ public extension AutoTokenizer {
     internal static func from(
         tokenizerConfig: Config,
         tokenizerData: Config,
-        tokenizerVocab: Any?,
+        tokenizerVocab: TokenizerVocab?,
         tokenizerMerges: [Any]?,
         strict: Bool = true
     ) throws -> Tokenizer {
@@ -1225,7 +1227,7 @@ public extension AutoTokenizer {
     internal static func fromAsync(
         tokenizerConfig: Config,
         tokenizerData: Config,
-        tokenizerVocab: Any?,
+        tokenizerVocab: TokenizerVocab?,
         tokenizerMerges: [Any]?,
         strict: Bool = true
     ) async throws -> Tokenizer {
@@ -1299,7 +1301,7 @@ class LlamaPreTrainedTokenizer: PreTrainedTokenizer, @unchecked Sendable {
     required init(
         tokenizerConfig: Config,
         tokenizerData: Config,
-        tokenizerVocab: Any? = nil,
+        tokenizerVocab: TokenizerVocab? = nil,
         tokenizerMerges: [Any]? = nil,
         strict: Bool = true
     ) throws {
@@ -1333,7 +1335,7 @@ class LlamaPreTrainedTokenizer: PreTrainedTokenizer, @unchecked Sendable {
     override class func createAsync(
         tokenizerConfig: Config,
         tokenizerData: Config,
-        tokenizerVocab: Any?,
+        tokenizerVocab: TokenizerVocab?,
         tokenizerMerges: [Any]?,
         strict: Bool = true
     ) async throws -> PreTrainedTokenizer {

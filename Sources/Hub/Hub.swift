@@ -14,6 +14,19 @@ import Foundation
 /// All operations are performed through the shared HubApi instance unless specified otherwise.
 public enum Hub {}
 
+/// Vocabulary data extracted from tokenizer.json for fast initialization.
+///
+/// This enum provides type-safe access to vocabulary data, avoiding the need for
+/// runtime type casting at each usage site.
+///
+/// - Note: `@unchecked Sendable` is safe because the underlying data is immutable after extraction from JSON.
+public enum TokenizerVocab: @unchecked Sendable {
+    /// BPE vocabulary: dictionary mapping token strings to token IDs.
+    case bpe(NSDictionary)
+    /// Unigram vocabulary: array of [token, score] pairs.
+    case unigram(NSArray)
+}
+
 public extension Hub {
     /// Errors that can occur during Hub client operations.
     ///
@@ -128,7 +141,7 @@ public actor LanguageModelConfigurationFromHub {
     private var _modelConfig: Config?
     private var _tokenizerConfig: Config?
     private var _tokenizerData: Config?
-    private var _tokenizerVocab: Any?
+    private var _tokenizerVocab: TokenizerVocab?
     private var _tokenizerMerges: [Any]?
 
     /// Initializes configuration loading from a remote Hub repository.
@@ -232,9 +245,12 @@ public actor LanguageModelConfigurationFromHub {
         }
     }
 
-    /// Raw vocabulary data extracted directly from JSON for fast tokenizer initialization.
-    /// For BPE: `NSDictionary`. For Unigram: `[[Any]]` array of [token, score] pairs.
-    public var tokenizerVocab: Any? {
+    /// Vocabulary data extracted directly from JSON for fast tokenizer initialization.
+    ///
+    /// Returns a type-safe enum that distinguishes between:
+    /// - `.bpe(NSDictionary)`: Token string to ID mapping
+    /// - `.unigram(NSArray)`: Array of [token, score] pairs
+    public var tokenizerVocab: TokenizerVocab? {
         get async throws {
             try await ensureLoaded()
             return _tokenizerVocab
@@ -264,7 +280,7 @@ public actor LanguageModelConfigurationFromHub {
         var modelConfig: Config?
         var tokenizerConfig: Config?
         var tokenizerData: Config
-        var tokenizerVocab: Any?
+        var tokenizerVocab: TokenizerVocab?
         var tokenizerMerges: [Any]?
     }
 
@@ -356,7 +372,7 @@ public actor LanguageModelConfigurationFromHub {
             let parsed = NSMutableDictionary(dictionary: parsedAny)
 
             // Extract vocab/merges for fast tokenizer initialization (BPE and Unigram)
-            var tokenizerVocab: Any? = nil
+            var tokenizerVocab: TokenizerVocab? = nil
             var tokenizerMerges: [Any]? = nil
 
             if let modelDict = parsed["model"] as? NSDictionary {
@@ -364,15 +380,22 @@ public actor LanguageModelConfigurationFromHub {
                 let modelType = model["type"] as? String
 
                 // Only extract and strip for BPE and Unigram models
-                if modelType == "BPE" || modelType == "Unigram" {
-                    // Extract vocab preserving NSString keys to avoid Unicode normalization
-                    tokenizerVocab = model["vocab"]
+                if modelType == "BPE", let vocab = model["vocab"] as? NSDictionary {
+                    tokenizerVocab = .bpe(vocab)
                     tokenizerMerges = model["merges"] as? [Any]
 
                     // Only strip if opted in (for backward compatibility)
                     if stripVocabForPerformance {
                         model.removeObject(forKey: "vocab")
                         model.removeObject(forKey: "merges")
+                        parsed["model"] = model
+                    }
+                } else if modelType == "Unigram", let vocab = model["vocab"] as? NSArray {
+                    tokenizerVocab = .unigram(vocab)
+
+                    // Only strip if opted in (for backward compatibility)
+                    if stripVocabForPerformance {
+                        model.removeObject(forKey: "vocab")
                         parsed["model"] = model
                     }
                 }
