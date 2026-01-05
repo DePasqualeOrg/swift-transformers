@@ -243,6 +243,9 @@ class SnapshotDownloadTests: XCTestCase {
             errorHandler: nil
         ) {
             for case let fileURL as URL in enumerator {
+                // Skip lock files (used for concurrent download coordination)
+                if fileURL.pathExtension == "lock" { continue }
+
                 do {
                     let resourceValues = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
                     if resourceValues.isRegularFile == true {

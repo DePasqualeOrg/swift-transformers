@@ -8,19 +8,15 @@ import Foundation
 /// ## Usage
 ///
 /// ```swift
-/// let lock = FileLock(path: blobPath)
+/// let lock = FileLock(lockPath: metadataDir.appending(path: "file.lock"))
 /// try await lock.withLock {
 ///     // Exclusive access to the resource
-///     try data.write(to: blobPath)
+///     try data.write(to: targetPath)
 /// }
 /// ```
 ///
 /// The lock is automatically released when the closure completes or throws.
-///
-/// ## Lock File Location
-///
-/// The lock file is created alongside the target path with a `.lock` extension.
-/// For example, locking `/cache/blobs/abc123` creates `/cache/blobs/abc123.lock`.
+/// Lock files are stored in a metadata directory to keep them hidden from users.
 public struct FileLock: Sendable {
     /// The path to the lock file.
     public let lockPath: URL
@@ -31,14 +27,14 @@ public struct FileLock: Sendable {
     /// Delay between retry attempts in seconds.
     public let retryDelay: TimeInterval
 
-    /// Creates a file lock for the specified path.
+    /// Creates a file lock at the specified lock file path.
     ///
     /// - Parameters:
-    ///   - path: The path to the resource being protected.
+    ///   - lockPath: The path where the lock file will be created.
     ///   - maxRetries: Maximum number of lock acquisition attempts. Defaults to 5.
     ///   - retryDelay: Delay between retry attempts in seconds. Defaults to 1.0.
-    public init(path: URL, maxRetries: Int = 5, retryDelay: TimeInterval = 1.0) {
-        self.lockPath = path.appendingPathExtension("lock")
+    public init(lockPath: URL, maxRetries: Int = 5, retryDelay: TimeInterval = 1.0) {
+        self.lockPath = lockPath
         self.maxRetries = maxRetries
         self.retryDelay = retryDelay
     }
@@ -125,8 +121,7 @@ public struct FileLock: Sendable {
     private func releaseLock(_ handle: FileHandle) {
         flock(handle.fileDescriptor, LOCK_UN)
         try? handle.close()
-        // Clean up the lock file after releasing
-        try? FileManager.default.removeItem(at: lockPath)
+        // Lock file left in place to avoid race conditions (see tox-dev/filelock#31).
     }
 }
 
