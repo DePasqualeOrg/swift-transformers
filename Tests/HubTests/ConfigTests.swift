@@ -440,4 +440,111 @@ struct ConfigTests {
 
         #expect(got == exp)
     }
+
+    @Test("stripVocabForPerformance preserves vocab in tokenizerData when false")
+    func stripVocabForPerformance_false() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Minimal BPE tokenizer.json
+        let tokenizerJson = """
+            {
+                "model": {
+                    "type": "BPE",
+                    "vocab": { "hello": 0, "world": 1 },
+                    "merges": ["h e", "l o"]
+                }
+            }
+            """
+        try tokenizerJson.write(
+            to: tempDir.appendingPathComponent("tokenizer.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        // Minimal config.json
+        let configJson = """
+            { "model_type": "test" }
+            """
+        try configJson.write(
+            to: tempDir.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let loader = LanguageModelConfigurationFromHub(
+            modelFolder: tempDir,
+            stripVocabForPerformance: false
+        )
+
+        let tokenizerData = try await loader.tokenizerData
+
+        // Vocab should be present in tokenizerData.model.vocab
+        let vocabConfig = tokenizerData["model"]["vocab"]
+        #expect(!vocabConfig.isNull())
+        #expect(vocabConfig["hello"].integer() == 0)
+        #expect(vocabConfig["world"].integer() == 1)
+    }
+
+    @Test("stripVocabForPerformance extracts vocab to tokenizerVocab when true")
+    func stripVocabForPerformance_true() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Minimal BPE tokenizer.json
+        let tokenizerJson = """
+            {
+                "model": {
+                    "type": "BPE",
+                    "vocab": { "hello": 0, "world": 1 },
+                    "merges": ["h e", "l o"]
+                }
+            }
+            """
+        try tokenizerJson.write(
+            to: tempDir.appendingPathComponent("tokenizer.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        // Minimal config.json
+        let configJson = """
+            { "model_type": "test" }
+            """
+        try configJson.write(
+            to: tempDir.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let loader = LanguageModelConfigurationFromHub(
+            modelFolder: tempDir,
+            stripVocabForPerformance: true
+        )
+
+        // Vocab should be extracted to tokenizerVocab
+        let tokenizerVocab = try await loader.tokenizerVocab
+        #expect(tokenizerVocab != nil)
+
+        if case .bpe(let vocab) = tokenizerVocab {
+            #expect(vocab["hello"] as? Int == 0)
+            #expect(vocab["world"] as? Int == 1)
+        } else {
+            Issue.record("Expected .bpe vocab type")
+        }
+
+        // Merges should be extracted
+        let merges = try await loader.tokenizerMerges
+        #expect(merges != nil)
+        #expect(merges?.count == 2)
+
+        // tokenizerData.model.vocab should be empty (stripped)
+        let tokenizerData = try await loader.tokenizerData
+        let vocabConfig = tokenizerData["model"]["vocab"]
+        #expect(vocabConfig.isNull())
+    }
 }
