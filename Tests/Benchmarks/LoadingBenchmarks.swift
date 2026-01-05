@@ -5,6 +5,7 @@
 //  Run with: RUN_BENCHMARKS=1 swift test --filter LoadingBenchmarks
 //
 
+import Dispatch
 import Foundation
 import Testing
 
@@ -18,86 +19,170 @@ import Testing
 )
 struct LoadingBenchmarks {
 
+    // MARK: - Benchmark Utilities
+
+    struct BenchmarkStats {
+        let mean: Double
+        let stdDev: Double
+        let min: Double
+        let max: Double
+
+        var formatted: String {
+            String(format: "%.1f ms (± %.1f)", mean, stdDev)
+        }
+    }
+
+    /// Measures execution time using monotonic clock, returning individual timings in milliseconds.
+    private func measureAsync(
+        label: String,
+        labelWidth: Int,
+        iterations: Int,
+        warmup: Int = 2,
+        _ block: () async throws -> Void
+    ) async rethrows -> [Double] {
+        let paddedLabel = label.padding(toLength: labelWidth, withPad: " ", startingAt: 0)
+        print("\(paddedLabel) ", terminator: "")
+        fflush(stdout)
+
+        // Warmup runs (not measured)
+        for _ in 0..<warmup {
+            try await block()
+        }
+
+        var times: [Double] = []
+        times.reserveCapacity(iterations)
+
+        for i in 0..<iterations {
+            let start = DispatchTime.now()
+            try await block()
+            let end = DispatchTime.now()
+            let nanoseconds = end.uptimeNanoseconds - start.uptimeNanoseconds
+            times.append(Double(nanoseconds) / 1_000_000)
+
+            if (i + 1) % 5 == 0 {
+                print(String(format: "%2d", i + 1), terminator: "")
+            } else {
+                print(".", terminator: "")
+            }
+            fflush(stdout)
+        }
+
+        let mean = times.reduce(0, +) / Double(times.count)
+        print(String(format: " %6.1f ms", mean))
+
+        return times
+    }
+
+    /// Sync version of measure for non-async operations.
+    private func measure(
+        label: String,
+        labelWidth: Int,
+        iterations: Int,
+        warmup: Int = 2,
+        _ block: () throws -> Void
+    ) rethrows -> [Double] {
+        let paddedLabel = label.padding(toLength: labelWidth, withPad: " ", startingAt: 0)
+        print("\(paddedLabel) ", terminator: "")
+        fflush(stdout)
+
+        // Warmup runs (not measured)
+        for _ in 0..<warmup {
+            try block()
+        }
+
+        var times: [Double] = []
+        times.reserveCapacity(iterations)
+
+        for i in 0..<iterations {
+            let start = DispatchTime.now()
+            try block()
+            let end = DispatchTime.now()
+            let nanoseconds = end.uptimeNanoseconds - start.uptimeNanoseconds
+            times.append(Double(nanoseconds) / 1_000_000)
+
+            if (i + 1) % 5 == 0 {
+                print(String(format: "%2d", i + 1), terminator: "")
+            } else {
+                print(".", terminator: "")
+            }
+            fflush(stdout)
+        }
+
+        let mean = times.reduce(0, +) / Double(times.count)
+        print(String(format: " %6.1f ms", mean))
+
+        return times
+    }
+
+    private func stats(_ times: [Double]) -> BenchmarkStats {
+        let mean = times.reduce(0, +) / Double(times.count)
+        let variance = times.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(times.count)
+        let stdDev = sqrt(variance)
+        let min = times.min() ?? 0
+        let max = times.max() ?? 0
+        return BenchmarkStats(mean: mean, stdDev: stdDev, min: min, max: max)
+    }
+
+    // MARK: - Tests
+
     @Test("Benchmark tokenizer loading from local folder")
     func benchmarkLocalLoading() async throws {
-        print("\n" + String(repeating: "=", count: 60))
-        print("TOKENIZER LOADING BENCHMARK")
-        print(String(repeating: "=", count: 60))
-        print("\nThis benchmark measures end-to-end tokenizer loading time")
-        print("from a local model folder (simulating cached models).\n")
-
         let modelName = "Qwen/Qwen3-0.6B-Base"
+        let iterations = 15
+        let labelWidth = 20
 
         // Download model files
-        print("Downloading model: \(modelName)")
+        print("Downloading model: \(modelName)...")
         let hubApi = HubApi()
         let repo = Hub.Repo(id: modelName)
         let filesToDownload = ["config.json", "tokenizer_config.json", "tokenizer.json"]
         let modelFolder = try await hubApi.snapshot(from: repo, matching: filesToDownload)
-        print("Model folder: \(modelFolder.path)\n")
 
         // Get tokenizer.json size for context
         let tokenizerJsonURL = modelFolder.appending(path: "tokenizer.json")
-        let tokenizerJsonSize = try Data(contentsOf: tokenizerJsonURL).count
-        print("tokenizer.json size: \(tokenizerJsonSize / 1024) KB")
+        let tokenizerJsonData = try Data(contentsOf: tokenizerJsonURL)
 
         // Count vocab/merges entries
-        let parsed =
-            try JSONSerialization.jsonObject(
-                with: Data(contentsOf: tokenizerJsonURL)
-            ) as! [String: Any]
+        var vocabCount = 0
+        var mergeCount = 0
+        let parsed = try JSONSerialization.jsonObject(with: tokenizerJsonData) as! [String: Any]
         if let model = parsed["model"] as? [String: Any] {
-            if let vocab = model["vocab"] as? [String: Any] {
-                print("Vocab entries: \(vocab.count)")
-            }
-            if let merges = model["merges"] as? [Any] {
-                print("Merge entries: \(merges.count)")
-            }
+            vocabCount = (model["vocab"] as? [String: Any])?.count ?? 0
+            mergeCount = (model["merges"] as? [Any])?.count ?? 0
         }
-        print("")
 
-        // Warm-up run
-        print("Warm-up run...")
-        let _ = try await AutoTokenizer.from(modelFolder: modelFolder)
+        print("Benchmarking with \(iterations) iterations...\n")
 
-        // Timed runs
-        let iterations = 5
-        print("Running \(iterations) iterations...\n")
-
-        var times: [Double] = []
-        for i in 1...iterations {
-            let start = CFAbsoluteTimeGetCurrent()
+        let times = try await measureAsync(label: "AutoTokenizer.from", labelWidth: labelWidth, iterations: iterations) {
             let _ = try await AutoTokenizer.from(modelFolder: modelFolder)
-            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
-            times.append(elapsed)
-            print("  Run \(i): \(String(format: "%.1f", elapsed)) ms")
         }
 
-        let avgTime = times.reduce(0, +) / Double(times.count)
-        let minTime = times.min()!
-        let maxTime = times.max()!
+        let s = stats(times)
 
-        print("\n" + String(repeating: "-", count: 40))
-        print("RESULTS")
-        print(String(repeating: "-", count: 40))
-        print("  Average: \(String(format: "%.1f", avgTime)) ms")
-        print("  Min:     \(String(format: "%.1f", minTime)) ms")
-        print("  Max:     \(String(format: "%.1f", maxTime)) ms")
-        print(String(repeating: "=", count: 60))
-        print("")
+        print(
+            """
+
+            ============================================
+            Tokenizer Loading Benchmark (\(iterations) iterations)
+            Model: \(modelName)
+            File size: \(ByteCountFormatter.string(fromByteCount: Int64(tokenizerJsonData.count), countStyle: .file))
+            Vocab: \(vocabCount) tokens, Merges: \(mergeCount)
+            ============================================
+            Loading time: \(s.formatted)
+            Min: \(String(format: "%.1f", s.min)) ms, Max: \(String(format: "%.1f", s.max)) ms
+            ============================================
+
+            """)
     }
 
     @Test("Compare optimized vs unoptimized loading")
     func compareOptimizedVsUnoptimized() async throws {
-        print("\n" + String(repeating: "=", count: 60))
-        print("OPTIMIZED vs UNOPTIMIZED COMPARISON")
-        print(String(repeating: "=", count: 60))
-        print("\nCompares the optimized path (vocab/merges extracted before")
-        print("Config conversion) vs the old unoptimized path.\n")
-
         let modelName = "Qwen/Qwen3-0.6B-Base"
+        let iterations = 10
+        let labelWidth = 22
 
         // Download model files
+        print("Downloading model: \(modelName)...")
         let hubApi = HubApi()
         let repo = Hub.Repo(id: modelName)
         let filesToDownload = ["config.json", "tokenizer_config.json", "tokenizer.json"]
@@ -106,24 +191,16 @@ struct LoadingBenchmarks {
         let tokenizerJsonURL = modelFolder.appending(path: "tokenizer.json")
         let tokenizerConfigURL = modelFolder.appending(path: "tokenizer_config.json")
 
-        let iterations = 3
+        print("Benchmarking with \(iterations) iterations...\n")
 
         // --- UNOPTIMIZED PATH (old way) ---
         // Recreates the old behavior: convert entire JSON to Config including vocab/merges
-        print("UNOPTIMIZED PATH (old way):")
-        print("  - Converts entire tokenizer.json to Config")
-        print("  - 300k+ vocab/merges entries wrapped in Config objects")
-        print("")
-
-        var unoptimizedTimes: [Double] = []
-        for i in 1...iterations {
-            let start = CFAbsoluteTimeGetCurrent()
-
+        let unoptimizedTimes = try measure(label: "Unoptimized (old way)", labelWidth: labelWidth, iterations: iterations) {
             // Read files
             let tokenizerData = try Data(contentsOf: tokenizerJsonURL)
             let configData = try Data(contentsOf: tokenizerConfigURL)
 
-            // Parse JSON (old way - no BOM preservation, but close enough for timing)
+            // Parse JSON (old way)
             let parsedTokenizer = try JSONSerialization.jsonObject(with: tokenizerData) as! [NSString: Any]
             let parsedConfig = try JSONSerialization.jsonObject(with: configData) as! [NSString: Any]
 
@@ -131,54 +208,47 @@ struct LoadingBenchmarks {
             let tokenizerDataConfig = Config(parsedTokenizer)
             let tokenizerConfig = Config(parsedConfig)
 
-            // Create tokenizer (will re-extract vocab from Config - wasteful)
+            // Create tokenizer
             let _ = try AutoTokenizer.from(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerDataConfig)
-
-            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
-            unoptimizedTimes.append(elapsed)
-            print("  Run \(i): \(String(format: "%.1f", elapsed)) ms")
         }
-
-        let unoptimizedAvg = unoptimizedTimes.reduce(0, +) / Double(unoptimizedTimes.count)
 
         // --- OPTIMIZED PATH (new way) ---
-        print("\nOPTIMIZED PATH (new way):")
-        print("  - Extracts vocab/merges before Config conversion")
-        print("  - Only small config sections wrapped in Config")
-        print("")
-
-        var optimizedTimes: [Double] = []
-        for i in 1...iterations {
-            let start = CFAbsoluteTimeGetCurrent()
+        let optimizedTimes = try await measureAsync(label: "Optimized (current)", labelWidth: labelWidth, iterations: iterations) {
             let _ = try await AutoTokenizer.from(modelFolder: modelFolder)
-            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
-            optimizedTimes.append(elapsed)
-            print("  Run \(i): \(String(format: "%.1f", elapsed)) ms")
         }
 
-        let optimizedAvg = optimizedTimes.reduce(0, +) / Double(optimizedTimes.count)
-        let speedup = unoptimizedAvg / optimizedAvg
+        let unoptimizedStats = stats(unoptimizedTimes)
+        let optimizedStats = stats(optimizedTimes)
+        let speedup = unoptimizedStats.mean / optimizedStats.mean
+        let timeSaved = unoptimizedStats.mean - optimizedStats.mean
 
-        print("\n" + String(repeating: "-", count: 50))
-        print("COMPARISON RESULTS")
-        print(String(repeating: "-", count: 50))
-        print("  Unoptimized avg: \(String(format: "%7.1f", unoptimizedAvg)) ms")
-        print("  Optimized avg:   \(String(format: "%7.1f", optimizedAvg)) ms")
-        print("  Speedup:         \(String(format: "%7.2f", speedup))x")
-        print(String(repeating: "=", count: 60))
-        print("")
+        print(
+            """
+
+            ============================================
+            Optimized vs Unoptimized (\(iterations) iterations)
+            Model: \(modelName)
+            ============================================
+            Unoptimized (old way): \(unoptimizedStats.formatted)
+              - Converts entire tokenizer.json to Config
+              - 300k+ vocab/merges entries wrapped in Config
+            Optimized (current):   \(optimizedStats.formatted)
+              - Extracts vocab/merges before Config conversion
+              - Only small config sections wrapped in Config
+            --------------------------------------------
+            Speedup: \(String(format: "%.2f", speedup))x (\(String(format: "%.0f", timeSaved)) ms saved)
+            ============================================
+
+            """)
     }
 
     @Test("Detailed breakdown of optimized loading path")
     func detailedOptimizedBreakdown() async throws {
-        print("\n" + String(repeating: "=", count: 60))
-        print("DETAILED BREAKDOWN - OPTIMIZED PATH")
-        print(String(repeating: "=", count: 60))
-        print("\nShows where time is spent in the current optimized loading.\n")
-
         let modelName = "Qwen/Qwen3-0.6B-Base"
+        let iterations = 10
 
         // Download model files
+        print("Downloading model: \(modelName)...")
         let hubApi = HubApi()
         let repo = Hub.Repo(id: modelName)
         let filesToDownload = ["config.json", "tokenizer_config.json", "tokenizer.json"]
@@ -187,162 +257,173 @@ struct LoadingBenchmarks {
         let tokenizerJsonURL = modelFolder.appending(path: "tokenizer.json")
         let tokenizerConfigURL = modelFolder.appending(path: "tokenizer_config.json")
 
-        // Warm up
-        let _ = try await AutoTokenizer.from(modelFolder: modelFolder)
+        print("Running detailed breakdown (\(iterations) iterations)...\n")
 
-        // --- Stage 1: Read files from disk ---
-        let stage1Start = CFAbsoluteTimeGetCurrent()
-        let tokenizerJsonData = try Data(contentsOf: tokenizerJsonURL)
-        let tokenizerConfigData = try Data(contentsOf: tokenizerConfigURL)
-        let stage1Time = (CFAbsoluteTimeGetCurrent() - stage1Start) * 1000
-
-        // --- Stage 2: Parse JSON ---
-        let stage2Start = CFAbsoluteTimeGetCurrent()
-        let parsedAny = try YYJSONParser.parseToNSDictionary(tokenizerJsonData)
-        let parsed = NSMutableDictionary(dictionary: parsedAny)
-        let parsedConfig = try JSONSerialization.jsonObject(with: tokenizerConfigData) as! [NSString: Any]
-        let stage2Time = (CFAbsoluteTimeGetCurrent() - stage2Start) * 1000
-
-        // --- Stage 3: Extract vocab/merges ---
-        let stage3Start = CFAbsoluteTimeGetCurrent()
-        var tokenizerVocab: NSDictionary? = nil
-        var tokenizerMerges: [Any]? = nil
-
-        if let modelDict = parsed["model"] as? NSDictionary {
-            let model = NSMutableDictionary(dictionary: modelDict)
-            tokenizerVocab = model["vocab"] as? NSDictionary
-            tokenizerMerges = model["merges"] as? [Any]
-            model.removeObject(forKey: "vocab")
-            model.removeObject(forKey: "merges")
-            parsed["model"] = model
-        }
-        let stage3Time = (CFAbsoluteTimeGetCurrent() - stage3Start) * 1000
-
-        // --- Stage 4: Config conversion (small sections only) ---
-        let stage4Start = CFAbsoluteTimeGetCurrent()
-        let tokenizerData = Config(parsed as! [NSString: Any])
-        _ = Config(parsedConfig) // tokenizerConfig - unused but timed
-        let stage4Time = (CFAbsoluteTimeGetCurrent() - stage4Start) * 1000
-
-        // --- Stage 5: PreTrainedTokenizer init (excluding model init) ---
-        // This includes: addedTokens parsing, regex building, pre/post processor creation
-        let stage5Start = CFAbsoluteTimeGetCurrent()
-
-        var addedTokens: [String: Int] = [:]
-        for addedToken in tokenizerData["addedTokens"].array(or: []) {
-            guard let id = addedToken["id"].integer() else { continue }
-            guard let content = addedToken.content.string() else { continue }
-            addedTokens[content] = id
+        // Warmup
+        for _ in 0..<2 {
+            let _ = try await AutoTokenizer.from(modelFolder: modelFolder)
         }
 
-        // Pre-tokenizer, normalizer, post-processor, decoder creation
-        let _ = PreTokenizerFactory.fromConfig(config: tokenizerData["preTokenizer"])
-        let _ = NormalizerFactory.fromConfig(config: tokenizerData["normalizer"])
-        let _ = PostProcessorFactory.fromConfig(config: tokenizerData["postProcessor"])
-        let _ = DecoderFactory.fromConfig(config: tokenizerData["decoder"], addedTokens: Set(addedTokens.keys))
+        // Collect times for each stage across iterations
+        var stage1Times: [Double] = []
+        var stage2Times: [Double] = []
+        var stage3Times: [Double] = []
+        var stage4Times: [Double] = []
+        var stage5Times: [Double] = []
+        var stage6aTimes: [Double] = []
+        var stage6bTimes: [Double] = []
 
-        // Build addedTokens regex (sorted by length)
-        let unwrappedAddedTokens: [(content: String, prefix: Bool, suffix: Bool)] = (tokenizerData["addedTokens"].array(or: [])).compactMap { addedToken -> (String, Bool, Bool)? in
-            guard let content = addedToken.content.string() else { return nil }
-            let prefix = addedToken["lstrip"].boolean(or: false)
-            let suffix = addedToken["rstrip"].boolean(or: false)
-            return (content: content, prefix: prefix, suffix: suffix)
-        }.sorted { $0.content.count > $1.content.count }
+        for i in 0..<iterations {
+            // --- Stage 1: Read files from disk ---
+            let stage1Start = DispatchTime.now()
+            let tokenizerJsonData = try Data(contentsOf: tokenizerJsonURL)
+            let tokenizerConfigData = try Data(contentsOf: tokenizerConfigURL)
+            stage1Times.append(Double(DispatchTime.now().uptimeNanoseconds - stage1Start.uptimeNanoseconds) / 1_000_000)
 
-        let addedTokensRegexString = unwrappedAddedTokens.map {
-            let token = NSRegularExpression.escapedPattern(for: $0.content)
-            let prefix = $0.prefix ? #"\s*"# : ""
-            let suffix = $0.suffix ? #"\s*"# : ""
-            return "\(prefix)(\(token))\(suffix)"
-        }.joined(separator: "|")
-        let _ = try? NSRegularExpression(pattern: addedTokensRegexString, options: [])
+            // --- Stage 2: Parse JSON ---
+            let stage2Start = DispatchTime.now()
+            let parsedAny = try YYJSONParser.parseToNSDictionary(tokenizerJsonData)
+            let parsed = NSMutableDictionary(dictionary: parsedAny)
+            let parsedConfig = try JSONSerialization.jsonObject(with: tokenizerConfigData) as! [NSString: Any]
+            stage2Times.append(Double(DispatchTime.now().uptimeNanoseconds - stage2Start.uptimeNanoseconds) / 1_000_000)
 
-        let stage5Time = (CFAbsoluteTimeGetCurrent() - stage5Start) * 1000
+            // --- Stage 3: Extract vocab/merges ---
+            let stage3Start = DispatchTime.now()
+            var tokenizerVocab: NSDictionary? = nil
+            var tokenizerMerges: [Any]? = nil
+            if let modelDict = parsed["model"] as? NSDictionary {
+                let model = NSMutableDictionary(dictionary: modelDict)
+                tokenizerVocab = model["vocab"] as? NSDictionary
+                tokenizerMerges = model["merges"] as? [Any]
+                model.removeObject(forKey: "vocab")
+                model.removeObject(forKey: "merges")
+                parsed["model"] = model
+            }
+            stage3Times.append(Double(DispatchTime.now().uptimeNanoseconds - stage3Start.uptimeNanoseconds) / 1_000_000)
 
-        // --- Stage 6: BPETokenizer model init ---
-        // Capture values to avoid Swift 6 warnings about captured vars in concurrent code
-        let vocabForAsync = tokenizerVocab!
-        let mergesForAsync = tokenizerMerges ?? []
-        let addedTokensForAsync = addedTokens
+            // --- Stage 4: Config conversion (small sections only) ---
+            let stage4Start = DispatchTime.now()
+            let tokenizerData = Config(parsed as! [NSString: Any])
+            _ = Config(parsedConfig)
+            stage4Times.append(Double(DispatchTime.now().uptimeNanoseconds - stage4Start.uptimeNanoseconds) / 1_000_000)
 
-        // 6a: Phase 1 - Build tokensToIds and parse merges IN PARALLEL
-        let stage6aStart = CFAbsoluteTimeGetCurrent()
-        async let tokensToIdsTask = BPETokenizer.buildTokensToIds(rawVocab: vocabForAsync, addedTokens: addedTokensForAsync)
-        async let mergesTask = BPETokenizer.mergesFromRawJSON(mergesForAsync)
-        let tokensToIds = await tokensToIdsTask
-        let merges = await mergesTask
-        let stage6aTime = (CFAbsoluteTimeGetCurrent() - stage6aStart) * 1000
+            // --- Stage 5: PreTrainedTokenizer init (excluding model init) ---
+            let stage5Start = DispatchTime.now()
+            var addedTokens: [String: Int] = [:]
+            for addedToken in tokenizerData["addedTokens"].array(or: []) {
+                guard let id = addedToken["id"].integer() else { continue }
+                guard let content = addedToken.content.string() else { continue }
+                addedTokens[content] = id
+            }
+            let _ = PreTokenizerFactory.fromConfig(config: tokenizerData["preTokenizer"])
+            let _ = NormalizerFactory.fromConfig(config: tokenizerData["normalizer"])
+            let _ = PostProcessorFactory.fromConfig(config: tokenizerData["postProcessor"])
+            let _ = DecoderFactory.fromConfig(config: tokenizerData["decoder"], addedTokens: Set(addedTokens.keys))
+            let unwrappedAddedTokens: [(content: String, prefix: Bool, suffix: Bool)] = (tokenizerData["addedTokens"].array(or: [])).compactMap { addedToken -> (String, Bool, Bool)? in
+                guard let content = addedToken.content.string() else { return nil }
+                let prefix = addedToken["lstrip"].boolean(or: false)
+                let suffix = addedToken["rstrip"].boolean(or: false)
+                return (content: content, prefix: prefix, suffix: suffix)
+            }.sorted { $0.content.count > $1.content.count }
+            let addedTokensRegexString = unwrappedAddedTokens.map {
+                let token = NSRegularExpression.escapedPattern(for: $0.content)
+                let prefix = $0.prefix ? #"\s*"# : ""
+                let suffix = $0.suffix ? #"\s*"# : ""
+                return "\(prefix)(\(token))\(suffix)"
+            }.joined(separator: "|")
+            let _ = try? NSRegularExpression(pattern: addedTokensRegexString, options: [])
+            stage5Times.append(Double(DispatchTime.now().uptimeNanoseconds - stage5Start.uptimeNanoseconds) / 1_000_000)
 
-        // 6b: Phase 2 - Build remaining dictionaries IN PARALLEL
-        let stage6bStart = CFAbsoluteTimeGetCurrent()
-        async let stringToIdTask = BPETokenizer.buildStringToIdIfNeeded(from: tokensToIds)
-        async let bpeRanksTask = BPETokenizer.buildBpeRanks(merges: merges, tokensToIds: tokensToIds)
-        async let idsToTokensTask = BPETokenizer.buildIdsToTokens(from: tokensToIds)
-        let stringToId = await stringToIdTask
-        let bpeRanks = await bpeRanksTask
-        let idsToTokens = await idsToTokensTask
-        let stage6bTime = (CFAbsoluteTimeGetCurrent() - stage6bStart) * 1000
+            // --- Stage 6: BPETokenizer model init ---
+            let vocabForAsync = tokenizerVocab!
+            let mergesForAsync = tokenizerMerges ?? []
+            let addedTokensForAsync = addedTokens
 
-        // Verify dictionaries were built (silence unused variable warnings)
-        _ = stringToId?.count
-        _ = bpeRanks.count
-        _ = idsToTokens.count
+            // 6a: Phase 1 - Build tokensToIds and parse merges IN PARALLEL
+            let stage6aStart = DispatchTime.now()
+            async let tokensToIdsTask = BPETokenizer.buildTokensToIds(rawVocab: vocabForAsync, addedTokens: addedTokensForAsync)
+            async let mergesTask = BPETokenizer.mergesFromRawJSON(mergesForAsync)
+            let tokensToIds = await tokensToIdsTask
+            let merges = await mergesTask
+            stage6aTimes.append(Double(DispatchTime.now().uptimeNanoseconds - stage6aStart.uptimeNanoseconds) / 1_000_000)
 
-        let stage6Time = stage6aTime + stage6bTime
+            // 6b: Phase 2 - Build remaining dictionaries IN PARALLEL
+            let stage6bStart = DispatchTime.now()
+            async let stringToIdTask = BPETokenizer.buildStringToIdIfNeeded(from: tokensToIds)
+            async let bpeRanksTask = BPETokenizer.buildBpeRanks(merges: merges, tokensToIds: tokensToIds)
+            async let idsToTokensTask = BPETokenizer.buildIdsToTokens(from: tokensToIds)
+            _ = await (stringToIdTask, bpeRanksTask, idsToTokensTask)
+            stage6bTimes.append(Double(DispatchTime.now().uptimeNanoseconds - stage6bStart.uptimeNanoseconds) / 1_000_000)
 
-        let totalTime = stage1Time + stage2Time + stage3Time + stage4Time + stage5Time + stage6Time
+            // Progress indicator
+            if (i + 1) % 5 == 0 {
+                print(String(format: "%2d", i + 1), terminator: "")
+            } else {
+                print(".", terminator: "")
+            }
+            fflush(stdout)
+        }
+        print(" done\n")
 
-        // Print results
-        print("Stage 1 - Read files:           \(String(format: "%6.1f", stage1Time)) ms  (\(String(format: "%4.1f", stage1Time / totalTime * 100))%)")
-        print("Stage 2 - Parse JSON:           \(String(format: "%6.1f", stage2Time)) ms  (\(String(format: "%4.1f", stage2Time / totalTime * 100))%)")
-        print("Stage 3 - Extract vocab/merges: \(String(format: "%6.1f", stage3Time)) ms  (\(String(format: "%4.1f", stage3Time / totalTime * 100))%)")
-        print("Stage 4 - Config conversion:    \(String(format: "%6.1f", stage4Time)) ms  (\(String(format: "%4.1f", stage4Time / totalTime * 100))%)")
-        print("Stage 5 - Tokenizer setup:      \(String(format: "%6.1f", stage5Time)) ms  (\(String(format: "%4.1f", stage5Time / totalTime * 100))%)")
-        print("Stage 6 - BPE model init:       \(String(format: "%6.1f", stage6Time)) ms  (\(String(format: "%4.1f", stage6Time / totalTime * 100))%)")
-        print("  6a - Phase 1 (tokensToIds + merges):")
-        print("        Wall time:              \(String(format: "%6.1f", stage6aTime)) ms  (\(String(format: "%4.1f", stage6aTime / totalTime * 100))%)")
-        print("  6b - Phase 2 (stringToId + bpeRanks + idsToTokens):")
-        print("        Wall time:              \(String(format: "%6.1f", stage6bTime)) ms  (\(String(format: "%4.1f", stage6bTime / totalTime * 100))%)")
-        print(String(repeating: "-", count: 50))
-        print("TOTAL:                          \(String(format: "%6.1f", totalTime)) ms")
-        print("")
+        // Calculate stats for each stage
+        let s1 = stats(stage1Times)
+        let s2 = stats(stage2Times)
+        let s3 = stats(stage3Times)
+        let s4 = stats(stage4Times)
+        let s5 = stats(stage5Times)
+        let s6a = stats(stage6aTimes)
+        let s6b = stats(stage6bTimes)
+
+        let totalMean = s1.mean + s2.mean + s3.mean + s4.mean + s5.mean + s6a.mean + s6b.mean
+
+        func pct(_ v: Double) -> String { String(format: "%4.1f", v / totalMean * 100) }
+
+        print(
+            """
+            ============================================
+            Detailed Breakdown (\(iterations) iterations)
+            Model: \(modelName)
+            ============================================
+            Stage 1 - Read files:           \(String(format: "%5.1f", s1.mean)) ms (± \(String(format: "%.1f", s1.stdDev)))  \(pct(s1.mean))%
+            Stage 2 - Parse JSON:           \(String(format: "%5.1f", s2.mean)) ms (± \(String(format: "%.1f", s2.stdDev)))  \(pct(s2.mean))%
+            Stage 3 - Extract vocab/merges: \(String(format: "%5.1f", s3.mean)) ms (± \(String(format: "%.1f", s3.stdDev)))  \(pct(s3.mean))%
+            Stage 4 - Config conversion:    \(String(format: "%5.1f", s4.mean)) ms (± \(String(format: "%.1f", s4.stdDev)))  \(pct(s4.mean))%
+            Stage 5 - Tokenizer setup:      \(String(format: "%5.1f", s5.mean)) ms (± \(String(format: "%.1f", s5.stdDev)))  \(pct(s5.mean))%
+            Stage 6a - tokensToIds+merges:  \(String(format: "%5.1f", s6a.mean)) ms (± \(String(format: "%.1f", s6a.stdDev)))  \(pct(s6a.mean))%
+            Stage 6b - bpeRanks+idsToTokens:\(String(format: "%5.1f", s6b.mean)) ms (± \(String(format: "%.1f", s6b.stdDev)))  \(pct(s6b.mean))%
+            --------------------------------------------
+            TOTAL:                          \(String(format: "%5.1f", totalMean)) ms
+            ============================================
+
+            """)
 
         // Identify bottlenecks
-        let stages = [
-            ("Read files", stage1Time),
-            ("Parse JSON", stage2Time),
-            ("Extract vocab/merges", stage3Time),
-            ("Config conversion", stage4Time),
-            ("Tokenizer setup", stage5Time),
-            ("Phase 1 (tokensToIds + merges)", stage6aTime),
-            ("Phase 2 (bpeRanks + idsToTokens)", stage6bTime),
+        let stages: [(String, Double)] = [
+            ("Read files", s1.mean),
+            ("Parse JSON", s2.mean),
+            ("Extract vocab/merges", s3.mean),
+            ("Config conversion", s4.mean),
+            ("Tokenizer setup", s5.mean),
+            ("tokensToIds + merges", s6a.mean),
+            ("bpeRanks + idsToTokens", s6b.mean),
         ]
         let sorted = stages.sorted { $0.1 > $1.1 }
 
-        print("TOP BOTTLENECKS:")
+        print("Top bottlenecks:")
         for (i, (name, time)) in sorted.prefix(3).enumerated() {
-            let pct = time / totalTime * 100
-            print("  \(i + 1). \(name): \(String(format: "%.1f", time)) ms (\(String(format: "%.1f", pct))%)")
+            print("  \(i + 1). \(name): \(String(format: "%.1f", time)) ms (\(pct(time))%)")
         }
-
-        print("")
-        print("Current Swift time: \(String(format: "%.0f", totalTime)) ms")
-        print(String(repeating: "=", count: 60))
         print("")
     }
 
     @Test("Sequential vs parallel dictionary building")
     func sequentialVsParallelDictBuilding() async throws {
-        print("\n" + String(repeating: "=", count: 60))
-        print("SEQUENTIAL vs PARALLEL DICTIONARY BUILDING")
-        print(String(repeating: "=", count: 60))
-        print("\nCompares sequential vs async let parallel building.")
-        print("Phase 1: tokensToIds + merges (independent)")
-        print("Phase 2: stringToId + bpeRanks + idsToTokens (depend on Phase 1)\n")
-
         let modelName = "Qwen/Qwen3-0.6B-Base"
+        let iterations = 10
+        let labelWidth = 12
 
         // Download model files
+        print("Downloading model: \(modelName)...")
         let hubApi = HubApi()
         let repo = Hub.Repo(id: modelName)
         let filesToDownload = ["config.json", "tokenizer_config.json", "tokenizer.json"]
@@ -363,16 +444,10 @@ struct LoadingBenchmarks {
 
         let addedTokens: [String: Int] = [:]
 
-        print("Vocab size: \(rawVocab.count)")
-        print("Merges count: \(rawMerges.count)\n")
-
-        let iterations = 5
+        print("Benchmarking with \(iterations) iterations...\n")
 
         // --- SEQUENTIAL (both phases) ---
-        print("SEQUENTIAL (all steps one after another):")
-        var sequentialTimes: [Double] = []
-        for i in 1...iterations {
-            let start = CFAbsoluteTimeGetCurrent()
+        let sequentialTimes = measure(label: "Sequential", labelWidth: labelWidth, iterations: iterations) {
             // Phase 1 sequential
             let tokensToIds = BPETokenizer.buildTokensToIds(rawVocab: rawVocab, addedTokens: addedTokens)
             let merges = BPETokenizer.mergesFromRawJSON(rawMerges)
@@ -380,17 +455,10 @@ struct LoadingBenchmarks {
             let _ = BPETokenizer.buildStringToIdIfNeeded(from: tokensToIds)
             let _ = BPETokenizer.buildBpeRanks(merges: merges, tokensToIds: tokensToIds)
             let _ = BPETokenizer.buildIdsToTokens(from: tokensToIds)
-            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
-            sequentialTimes.append(elapsed)
-            print("  Run \(i): \(String(format: "%.1f", elapsed)) ms")
         }
-        let seqAvg = sequentialTimes.reduce(0, +) / Double(sequentialTimes.count)
 
         // --- PARALLEL (both phases) ---
-        print("\nPARALLEL (async let for both phases):")
-        var parallelTimes: [Double] = []
-        for i in 1...iterations {
-            let start = CFAbsoluteTimeGetCurrent()
+        let parallelTimes = await measureAsync(label: "Parallel", labelWidth: labelWidth, iterations: iterations) {
             // Phase 1 parallel
             async let tokensToIdsTask = BPETokenizer.buildTokensToIds(rawVocab: rawVocab, addedTokens: addedTokens)
             async let mergesTask = BPETokenizer.mergesFromRawJSON(rawMerges)
@@ -401,23 +469,26 @@ struct LoadingBenchmarks {
             async let bpeRanks = BPETokenizer.buildBpeRanks(merges: merges, tokensToIds: tokensToIds)
             async let idsToTokens = BPETokenizer.buildIdsToTokens(from: tokensToIds)
             _ = await (stringToId, bpeRanks, idsToTokens)
-            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
-            parallelTimes.append(elapsed)
-            print("  Run \(i): \(String(format: "%.1f", elapsed)) ms")
         }
-        let parAvg = parallelTimes.reduce(0, +) / Double(parallelTimes.count)
 
-        let speedup = seqAvg / parAvg
-        let savings = seqAvg - parAvg
+        let seqStats = stats(sequentialTimes)
+        let parStats = stats(parallelTimes)
+        let speedup = seqStats.mean / parStats.mean
+        let timeSaved = seqStats.mean - parStats.mean
 
-        print("\n" + String(repeating: "-", count: 50))
-        print("RESULTS")
-        print(String(repeating: "-", count: 50))
-        print("  Sequential avg:  \(String(format: "%6.1f", seqAvg)) ms")
-        print("  Parallel avg:    \(String(format: "%6.1f", parAvg)) ms")
-        print("  Speedup:         \(String(format: "%6.2f", speedup))x")
-        print("  Time saved:      \(String(format: "%6.1f", savings)) ms")
-        print(String(repeating: "=", count: 60))
-        print("")
+        print(
+            """
+
+            ============================================
+            Sequential vs Parallel (\(iterations) iterations)
+            Vocab: \(rawVocab.count) tokens, Merges: \(rawMerges.count)
+            ============================================
+            Sequential: \(seqStats.formatted)
+            Parallel:   \(parStats.formatted)
+            --------------------------------------------
+            Speedup: \(String(format: "%.2f", speedup))x (\(String(format: "%.0f", timeSaved)) ms saved)
+            ============================================
+
+            """)
     }
 }
