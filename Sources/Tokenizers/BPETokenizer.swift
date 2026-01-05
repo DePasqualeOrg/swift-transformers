@@ -29,9 +29,11 @@ class BPETokenizer: PreTrainedTokenizerModel, @unchecked Sendable {
     private let stringToId: [String: Int]?
 
     /// Packs two token IDs into a single UInt64 for fast merge lookup.
+    /// Assumes token IDs fit in UInt32 (max ~4.3B). Current tokenizers have <1M tokens,
+    /// so this limit won't be hit in practice.
     @inline(__always)
     private static func packIds(_ a: Int, _ b: Int) -> UInt64 {
-        UInt64(UInt32(truncatingIfNeeded: a)) << 32 | UInt64(UInt32(truncatingIfNeeded: b))
+        UInt64(UInt32(a)) << 32 | UInt64(UInt32(b))
     }
 
     /// Looks up the merge rank for a pair of token strings.
