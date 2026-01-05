@@ -93,7 +93,7 @@ enum YYJSONParser {
             let doc = yyjson_read_opts(
                 UnsafeMutableRawPointer(mutating: baseAddress).assumingMemoryBound(to: CChar.self),
                 buffer.count,
-                YYJSON_READ_ALLOW_BOM,
+                0,
                 nil,
                 &err
             )
