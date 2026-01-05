@@ -157,11 +157,22 @@ public protocol PreTrainedTokenizerModel: TokenizingModel {
 enum TokenizerModel {
     /// User-registered custom tokenizer classes.
     /// Register via `AutoTokenizer.register(_:for:)`.
-    static var registeredTokenizers: [String: PreTrainedTokenizerModel.Type] = [:]
+    /// Note: Uses `NSLock` instead of `OSAllocatedUnfairLock` because protocol metatypes
+    /// don't conform to `Sendable`, which `OSAllocatedUnfairLock` requires for its state.
+    private static var _registeredTokenizers: [String: PreTrainedTokenizerModel.Type] = [:]
+    private static let registrationLock = NSLock()
+
+    static func registerTokenizer(_ tokenizerClass: PreTrainedTokenizerModel.Type, for name: String) {
+        registrationLock.lock()
+        defer { registrationLock.unlock() }
+        _registeredTokenizers[name] = tokenizerClass
+    }
 
     /// Returns the tokenizer class for the given name, checking registered tokenizers first.
     static func tokenizerClass(for name: String) -> PreTrainedTokenizerModel.Type? {
-        registeredTokenizers[name] ?? knownTokenizers[name]
+        registrationLock.lock()
+        defer { registrationLock.unlock() }
+        return _registeredTokenizers[name] ?? knownTokenizers[name]
     }
 
     static let knownTokenizers: [String: PreTrainedTokenizerModel.Type] = [
@@ -1090,7 +1101,7 @@ public enum AutoTokenizer {
     /// AutoTokenizer.register(MyTokenizer.self, for: "MyCustomTokenizer")
     /// ```
     public static func register(_ tokenizerClass: PreTrainedTokenizerModel.Type, for name: String) {
-        TokenizerModel.registeredTokenizers[name] = tokenizerClass
+        TokenizerModel.registerTokenizer(tokenizerClass, for: name)
     }
 }
 
