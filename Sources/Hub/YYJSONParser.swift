@@ -120,31 +120,24 @@ enum YYJSONParser {
     // MARK: - Foundation object conversion
 
     private static func convertToFoundation(_ val: UnsafeMutablePointer<yyjson_val>) -> Any {
-        let tag = yyjson_get_tag(val)
-        let type = tag & 0x07
-        let subtype = tag & 0x18
-
-        switch type {
-        case 0x02: // YYJSON_TYPE_NULL
+        if yyjson_is_null(val) {
             return NSNull()
-        case 0x03: // YYJSON_TYPE_BOOL
-            return NSNumber(value: subtype == 0x08)
-        case 0x04: // YYJSON_TYPE_NUM
-            if subtype == 0x00 { // YYJSON_SUBTYPE_UINT
-                return NSNumber(value: yyjson_get_uint(val))
-            } else if subtype == 0x08 { // YYJSON_SUBTYPE_SINT
-                return NSNumber(value: yyjson_get_sint(val))
-            } else { // YYJSON_SUBTYPE_REAL
-                return NSNumber(value: yyjson_get_real(val))
-            }
-        case 0x05: // YYJSON_TYPE_STR
+        } else if yyjson_is_bool(val) {
+            return NSNumber(value: yyjson_get_bool(val))
+        } else if yyjson_is_uint(val) {
+            return NSNumber(value: yyjson_get_uint(val))
+        } else if yyjson_is_sint(val) {
+            return NSNumber(value: yyjson_get_sint(val))
+        } else if yyjson_is_real(val) {
+            return NSNumber(value: yyjson_get_real(val))
+        } else if yyjson_is_str(val) {
             guard let str = yyjson_get_str(val) else { return "" as NSString }
             return String(cString: str) as NSString
-        case 0x06: // YYJSON_TYPE_ARR
+        } else if yyjson_is_arr(val) {
             return convertArrayToFoundation(val)
-        case 0x07: // YYJSON_TYPE_OBJ
+        } else if yyjson_is_obj(val) {
             return convertObjectToFoundation(val)
-        default:
+        } else {
             return NSNull()
         }
     }
