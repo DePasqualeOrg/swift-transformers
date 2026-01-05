@@ -5,6 +5,7 @@
 //  Benchmark tests comparing JSONSerialization vs yyjson performance.
 //
 
+import Darwin.Mach
 import Dispatch
 import Foundation
 import Testing
@@ -140,6 +141,48 @@ struct JSONParserBenchmarkTests {
         return BenchmarkStats(mean: mean, stdDev: stdDev, min: min, max: max)
     }
 
+    /// Returns the current resident memory size in bytes.
+    private func currentResidentMemory() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return 0 }
+        return Int(info.phys_footprint)
+    }
+
+    struct MemoryMeasurement {
+        let label: String
+        let peakBytes: Int
+
+        var formatted: String {
+            ByteCountFormatter.string(fromByteCount: Int64(peakBytes), countStyle: .memory)
+        }
+    }
+
+    /// Measures peak memory increase during a parsing operation.
+    private func measureMemory(label: String, iterations: Int = 5, _ block: () throws -> Any) rethrows -> MemoryMeasurement {
+        var peakIncrease = 0
+
+        for _ in 0..<iterations {
+            autoreleasepool {
+                let before = currentResidentMemory()
+                let result = try? block()
+                let after = currentResidentMemory()
+                let increase = after - before
+                if increase > peakIncrease {
+                    peakIncrease = increase
+                }
+                _ = result
+            }
+        }
+
+        return MemoryMeasurement(label: label, peakBytes: peakIncrease)
+    }
+
     @Test
     func compareParsingSpeed() throws {
         let iterations = 50
@@ -204,6 +247,45 @@ struct JSONParserBenchmarkTests {
             Full path speedup:          \(String(format: "%.2f", configSpeedup))x vs JSONSerialization (\(String(format: "%.0f", configTimeSaved)) ms saved)
             In-situ vs standard:        \(String(format: "%.2f", insituSpeedup))x faster (\(String(format: "%.0f", insituTimeSaved)) ms saved)
             In-situ vs JSONSer+Config:  \(String(format: "%.2f", insituVsJsonSer))x faster
+            ============================================
+
+            """)
+    }
+
+    @Test
+    func compareMemoryUsage() throws {
+        let tokenizerURL = modelFolder.appending(path: "tokenizer.json")
+
+        print("Measuring memory usage...\n")
+
+        let yyjsonStandard = try measureMemory(label: "yyjson -> Config") {
+            try YYJSONParser.parseToConfig(benchmarkData)
+        }
+
+        let yyjsonInsitu = try measureMemory(label: "yyjson -> Config (in-situ)") {
+            try YYJSONParser.parseFileToConfig(tokenizerURL)
+        }
+
+        let jsonSer = try measureMemory(label: "JSONSerialization+Config") {
+            let parsed = try JSONSerialization.jsonObject(with: benchmarkData, options: [])
+            return Config(parsed as! [NSString: Any])
+        }
+
+        let savings = yyjsonStandard.peakBytes - yyjsonInsitu.peakBytes
+        let savingsFormatted = ByteCountFormatter.string(fromByteCount: Int64(savings), countStyle: .memory)
+
+        print(
+            """
+
+            ============================================
+            Memory Usage Comparison
+            File size: \(ByteCountFormatter.string(fromByteCount: Int64(benchmarkData.count), countStyle: .file))
+            ============================================
+            yyjson -> Config:           \(yyjsonStandard.formatted)
+            yyjson -> Config (in-situ): \(yyjsonInsitu.formatted)
+            JSONSerialization+Config:   \(jsonSer.formatted)
+            --------------------------------------------
+            In-situ memory savings:     \(savingsFormatted)
             ============================================
 
             """)
