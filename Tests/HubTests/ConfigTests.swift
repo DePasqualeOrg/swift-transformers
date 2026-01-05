@@ -540,7 +540,7 @@ struct ConfigTests {
         // Merges should be extracted
         let merges = try await loader.tokenizerMerges
         #expect(merges != nil)
-        #expect(merges?.count == 2)
+        #expect(merges?.rules.count == 2)
 
         // tokenizerData.model.vocab should be empty (stripped)
         let tokenizerData = try await loader.tokenizerData
