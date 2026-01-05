@@ -11,7 +11,7 @@ private let logger = Logger()
 /// ## Usage
 ///
 /// ```swift
-/// let lock = FileLock(lockPath: metadataDir.appending(path: "file.lock"))
+/// let lock = FileLock(path: metadataDir.appending(path: "file"))
 /// try await lock.withLock {
 ///     // Exclusive access to the resource
 ///     try data.write(to: targetPath)
@@ -19,7 +19,11 @@ private let logger = Logger()
 /// ```
 ///
 /// The lock is automatically released when the closure completes or throws.
-/// Lock files are stored in a metadata directory to keep them hidden from users.
+///
+/// ## Lock File Location
+///
+/// The lock file is created at the specified path with a `.lock` extension.
+/// Callers typically pass a path in a metadata directory to keep lock files hidden from users.
 public struct FileLock: Sendable {
     /// The path to the lock file.
     public let lockPath: URL
@@ -33,10 +37,10 @@ public struct FileLock: Sendable {
     /// Interval between log messages while waiting for a lock.
     private static let logInterval: Int = 10
 
-    /// Creates a file lock at the specified lock file path.
+    /// Creates a file lock for the specified path.
     ///
     /// - Parameters:
-    ///   - lockPath: The path where the lock file will be created.
+    ///   - path: The base path for the lock file. A `.lock` extension will be appended.
     ///   - maxRetries: Maximum number of lock acquisition attempts. Defaults to 600 (10 minutes with 1s delay).
     ///   - retryDelay: Delay between retry attempts in seconds. Defaults to 1.0.
     ///
@@ -44,8 +48,8 @@ public struct FileLock: Sendable {
     /// which can take minutes for large models. Python's `huggingface_hub` uses `WeakFileLock`
     /// which waits indefinitely by default and logs every 10 seconds while waiting. We use a
     /// 10-minute timeout as a practical upper bound while matching the logging behavior.
-    public init(lockPath: URL, maxRetries: Int = 600, retryDelay: TimeInterval = 1.0) {
-        self.lockPath = lockPath
+    public init(path: URL, maxRetries: Int = 600, retryDelay: TimeInterval = 1.0) {
+        self.lockPath = path.appendingPathExtension("lock")
         self.maxRetries = maxRetries
         self.retryDelay = retryDelay
     }
