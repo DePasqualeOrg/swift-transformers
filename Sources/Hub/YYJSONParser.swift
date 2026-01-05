@@ -70,17 +70,6 @@ enum YYJSONParser {
         }
     }
 
-    /// Parses JSON data into a Config object, preserving BOM characters in strings.
-    ///
-    /// Unlike Foundation's `JSONSerialization`, yyjson correctly preserves BOM
-    /// characters (`\u{feff}`) within string values. This matters for tokenizers
-    /// like Gemma that use BOM as a token prefix (e.g., `"\u{feff}#"`).
-    ///
-    /// See: https://github.com/huggingface/swift-transformers/issues/116
-    static func bomPreservingParseToConfig(_ data: Data) throws -> Config {
-        try parseToConfig(data)
-    }
-
     // MARK: - Direct Config conversion
 
     private static func convertToConfig(_ val: UnsafeMutablePointer<yyjson_val>) -> Config {

@@ -326,7 +326,7 @@ public extension HubApi {
     func configuration(fileURL: URL) throws -> Config {
         let data = try Data(contentsOf: fileURL)
         do {
-            return try YYJSONParser.bomPreservingParseToConfig(data)
+            return try YYJSONParser.parseToConfig(data)
         } catch {
             throw Hub.HubClientError.jsonSerialization(
                 fileURL: fileURL,
