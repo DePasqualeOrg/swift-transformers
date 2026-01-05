@@ -91,7 +91,11 @@ enum YYJSONParser {
             }
             return Config(Int(uintVal))
         } else if yyjson_is_sint(val) {
-            return Config(Int(yyjson_get_sint(val)))
+            let sintVal = yyjson_get_sint(val)
+            if sintVal < Int64(Int.min) || sintVal > Int64(Int.max) {
+                return Config(Float(sintVal))
+            }
+            return Config(Int(sintVal))
         } else if yyjson_is_real(val) {
             return Config(Float(yyjson_get_real(val)))
         } else if yyjson_is_str(val) {
