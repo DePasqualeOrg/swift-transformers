@@ -102,10 +102,16 @@ class UnigramTokenizer: PreTrainedTokenizerModel, @unchecked Sendable {
         unknownPiece = SentencePieceToken(token: vocab[unknownTokenId].token, score: minScore - 10)
 
         tokensToIds = Dictionary(uniqueKeysWithValues: vocab.map { $0.token as NSString }.enumerated().map { ($1, $0) })
-        bosTokenId = tokensToIds[bosToken! as NSString] // May be nil
+        // bosToken is hardcoded as " " for Unigram tokenizers
+        bosTokenId = tokensToIds[" " as NSString]
 
-        eosToken = tokenizerConfig.eosToken.string()
-        eosTokenId = eosToken == nil ? nil : tokensToIds[eosToken! as NSString]
+        let eos = tokenizerConfig.eosToken.string()
+        eosToken = eos
+        if let eos {
+            eosTokenId = tokensToIds[eos as NSString]
+        } else {
+            eosTokenId = nil
+        }
 
         trie = Trie()
         trie.append(contentsOf: vocab.map { $0.token })
@@ -150,10 +156,16 @@ class UnigramTokenizer: PreTrainedTokenizerModel, @unchecked Sendable {
         unknownPiece = SentencePieceToken(token: vocab[unknownTokenId].token, score: minScore - 10)
 
         tokensToIds = Dictionary(uniqueKeysWithValues: vocab.map { $0.token as NSString }.enumerated().map { ($1, $0) })
-        bosTokenId = tokensToIds[bosToken! as NSString]
+        // bosToken is hardcoded as " " for Unigram tokenizers
+        bosTokenId = tokensToIds[" " as NSString]
 
-        eosToken = tokenizerConfig.eosToken.string()
-        eosTokenId = eosToken == nil ? nil : tokensToIds[eosToken! as NSString]
+        let eos = tokenizerConfig.eosToken.string()
+        eosToken = eos
+        if let eos {
+            eosTokenId = tokensToIds[eos as NSString]
+        } else {
+            eosTokenId = nil
+        }
 
         trie = Trie()
         trie.append(contentsOf: vocab.map { $0.token })
