@@ -142,7 +142,7 @@ struct JSONParserBenchmarkTests {
     }
 
     /// Returns the current resident memory size in bytes.
-    private func currentResidentMemory() -> Int {
+    private static func currentResidentMemory() -> Int {
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
         let result = withUnsafeMutablePointer(to: &info) {
@@ -156,31 +156,83 @@ struct JSONParserBenchmarkTests {
 
     struct MemoryMeasurement {
         let label: String
-        let peakBytes: Int
+        let peakAbsolute: Int
+        let baseline: Int
+
+        var peakIncrease: Int { peakAbsolute - baseline }
 
         var formatted: String {
-            ByteCountFormatter.string(fromByteCount: Int64(peakBytes), countStyle: .memory)
+            ByteCountFormatter.string(fromByteCount: Int64(peakAbsolute), countStyle: .memory)
+        }
+
+        var increaseFormatted: String {
+            let increase = peakIncrease
+            let prefix = increase >= 0 ? "+" : ""
+            return prefix + ByteCountFormatter.string(fromByteCount: Int64(increase), countStyle: .memory)
         }
     }
 
-    /// Measures peak memory increase during a parsing operation.
-    private func measureMemory(label: String, iterations: Int = 5, _ block: () throws -> Any) rethrows -> MemoryMeasurement {
-        var peakIncrease = 0
+    /// Shared state for memory sampling across threads.
+    private final class MemorySamplerState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _peakMemory: Int
+        private var _keepSampling: Bool = true
 
-        for _ in 0..<iterations {
-            autoreleasepool {
-                let before = currentResidentMemory()
-                let result = try? block()
-                let after = currentResidentMemory()
-                let increase = after - before
-                if increase > peakIncrease {
-                    peakIncrease = increase
+        init(baseline: Int) {
+            _peakMemory = baseline
+        }
+
+        var peakMemory: Int {
+            lock.withLock { _peakMemory }
+        }
+
+        var keepSampling: Bool {
+            lock.withLock { _keepSampling }
+        }
+
+        func updatePeak(_ value: Int) {
+            lock.withLock {
+                if value > _peakMemory {
+                    _peakMemory = value
                 }
-                _ = result
             }
         }
 
-        return MemoryMeasurement(label: label, peakBytes: peakIncrease)
+        func stop() {
+            lock.withLock { _keepSampling = false }
+        }
+    }
+
+    /// Measures peak absolute memory during a parsing operation by sampling on a background thread.
+    /// Returns the first iteration's measurement to avoid memory reuse effects.
+    private func measurePeakMemory(label: String, _ block: () throws -> Any) rethrows -> MemoryMeasurement {
+        // Only measure once to avoid memory reuse skewing results
+        return try autoreleasepool {
+            let baseline = Self.currentResidentMemory()
+            let state = MemorySamplerState(baseline: baseline)
+
+            // Sample memory on background thread at high frequency
+            let samplerThread = Thread { [state] in
+                while state.keepSampling {
+                    state.updatePeak(Self.currentResidentMemory())
+                    Thread.sleep(forTimeInterval: 0.0005) // 0.5ms sampling
+                }
+            }
+            samplerThread.start()
+
+            let result = try block()
+
+            // Final sample before stopping
+            state.updatePeak(Self.currentResidentMemory())
+            state.stop()
+
+            // Give the thread time to exit
+            Thread.sleep(forTimeInterval: 0.002)
+
+            _ = result
+
+            return MemoryMeasurement(label: label, peakAbsolute: state.peakMemory, baseline: baseline)
+        }
     }
 
     @Test
@@ -253,39 +305,62 @@ struct JSONParserBenchmarkTests {
     }
 
     @Test
-    func compareMemoryUsage() throws {
-        let tokenizerURL = modelFolder.appending(path: "tokenizer.json")
-
-        print("Measuring memory usage...\n")
-
-        let yyjsonStandard = try measureMemory(label: "yyjson -> Config") {
+    func memoryUsage_yyjsonStandard() throws {
+        print("Measuring peak memory for yyjson -> Config...")
+        let result = try measurePeakMemory(label: "yyjson -> Config") {
             try YYJSONParser.parseToConfig(benchmarkData)
         }
-
-        let yyjsonInsitu = try measureMemory(label: "yyjson -> Config (in-situ)") {
-            try YYJSONParser.parseFileToConfig(tokenizerURL)
-        }
-
-        let jsonSer = try measureMemory(label: "JSONSerialization+Config") {
-            let parsed = try JSONSerialization.jsonObject(with: benchmarkData, options: [])
-            return Config(parsed as! [NSString: Any])
-        }
-
-        let savings = yyjsonStandard.peakBytes - yyjsonInsitu.peakBytes
-        let savingsFormatted = ByteCountFormatter.string(fromByteCount: Int64(savings), countStyle: .memory)
-
         print(
             """
 
             ============================================
-            Memory Usage Comparison
+            yyjson -> Config Memory Usage
             File size: \(ByteCountFormatter.string(fromByteCount: Int64(benchmarkData.count), countStyle: .file))
             ============================================
-            yyjson -> Config:           \(yyjsonStandard.formatted)
-            yyjson -> Config (in-situ): \(yyjsonInsitu.formatted)
-            JSONSerialization+Config:   \(jsonSer.formatted)
-            --------------------------------------------
-            In-situ memory savings:     \(savingsFormatted)
+            Peak memory:     \(result.formatted)
+            Increase:        \(result.increaseFormatted)
+            ============================================
+
+            """)
+    }
+
+    @Test
+    func memoryUsage_yyjsonInsitu() throws {
+        let tokenizerURL = modelFolder.appending(path: "tokenizer.json")
+        print("Measuring peak memory for yyjson -> Config (in-situ)...")
+        let result = try measurePeakMemory(label: "yyjson -> Config (in-situ)") {
+            try YYJSONParser.parseFileToConfig(tokenizerURL)
+        }
+        print(
+            """
+
+            ============================================
+            yyjson -> Config (in-situ) Memory Usage
+            File size: \(ByteCountFormatter.string(fromByteCount: Int64(benchmarkData.count), countStyle: .file))
+            ============================================
+            Peak memory:     \(result.formatted)
+            Increase:        \(result.increaseFormatted)
+            ============================================
+
+            """)
+    }
+
+    @Test
+    func memoryUsage_jsonSerialization() throws {
+        print("Measuring peak memory for JSONSerialization+Config...")
+        let result = try measurePeakMemory(label: "JSONSerialization+Config") {
+            let parsed = try JSONSerialization.jsonObject(with: benchmarkData, options: [])
+            return Config(parsed as! [NSString: Any])
+        }
+        print(
+            """
+
+            ============================================
+            JSONSerialization+Config Memory Usage
+            File size: \(ByteCountFormatter.string(fromByteCount: Int64(benchmarkData.count), countStyle: .file))
+            ============================================
+            Peak memory:     \(result.formatted)
+            Increase:        \(result.increaseFormatted)
             ============================================
 
             """)
