@@ -80,9 +80,13 @@ enum YYJSONParser {
     /// - Returns: An NSDictionary
     /// - Throws: ParseError if parsing fails
     static func parseToNSDictionary(_ data: Data) throws -> NSDictionary {
-        try data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) -> NSDictionary in
+        guard !data.isEmpty else {
+            throw ParseError.readFailed(code: 0, message: "empty data", position: 0)
+        }
+
+        return try data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) -> NSDictionary in
             guard let baseAddress = buffer.baseAddress else {
-                throw ParseError.nullDocument
+                throw ParseError.readFailed(code: 0, message: "empty buffer", position: 0)
             }
 
             var err = yyjson_read_err()
