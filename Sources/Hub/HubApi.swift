@@ -539,6 +539,10 @@ public extension HubApi {
             repoMetadataDestination.appending(path: relativeFilename + ".metadata")
         }
 
+        var lockDestination: URL {
+            repoMetadataDestination.appending(path: relativeFilename + ".lock")
+        }
+
         var downloaded: Bool {
             FileManager.default.fileExists(atPath: destination.path)
         }
@@ -616,7 +620,7 @@ public extension HubApi {
 
             // Otherwise, download the file
             // Use file lock to prevent concurrent downloads of the same file
-            let lock = FileLock(path: destination)
+            let lock = FileLock(lockPath: lockDestination)
             return try await lock.withLock {
                 // Re-check if file exists with valid metadata after acquiring lock
                 // (another process may have completed the download while we waited)
