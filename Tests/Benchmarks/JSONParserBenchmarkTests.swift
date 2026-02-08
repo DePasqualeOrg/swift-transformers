@@ -13,7 +13,7 @@ import yyjson
 
 @testable import Hub
 
-@Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["RUN_BENCHMARKS"] != nil))
+@Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["RUN_BENCHMARKS"] == "1"))
 struct JSONParserBenchmarkTests {
     static let modelId = "mlx-community/Qwen3-0.6B-Base-DQ5"
 
