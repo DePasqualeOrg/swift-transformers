@@ -19,7 +19,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/huggingface/swift-jinja.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.0.0"),
-        .package(url: "https://github.com/ibireme/yyjson.git", from: "0.12.0"),
+        .package(url: "https://github.com/ibireme/yyjson.git", exact: "0.12.0"),
     ],
     targets: [
         .target(name: "Generation", dependencies: ["Tokenizers"]),
