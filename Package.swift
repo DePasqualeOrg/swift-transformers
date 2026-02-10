@@ -20,6 +20,7 @@ let package = Package(
         .package(url: "https://github.com/huggingface/swift-jinja.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.0.0"),
         .package(url: "https://github.com/ibireme/yyjson.git", exact: "0.12.0"),
+        .package(url: "https://github.com/DePasqualeOrg/swift-filelock.git", from: "0.1.0"),
     ],
     targets: [
         .target(name: "Generation", dependencies: ["Tokenizers"]),
@@ -29,6 +30,7 @@ let package = Package(
                 .product(name: "Jinja", package: "swift-jinja"),
                 .product(name: "OrderedCollections", package: "swift-collections"),
                 .product(name: "yyjson", package: "yyjson"),
+                .product(name: "FileLock", package: "swift-filelock"),
             ],
             resources: [
                 .process("Resources")

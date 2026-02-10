@@ -6,6 +6,7 @@
 //
 
 import CryptoKit
+import FileLock
 import Foundation
 import Network
 import os
@@ -513,7 +514,7 @@ public extension HubApi {
         }
 
         var lockDestination: URL {
-            repoMetadataDestination.appending(path: relativeFilename)
+            repoMetadataDestination.appending(path: relativeFilename + ".lock")
         }
 
         var downloaded: Bool {
@@ -593,7 +594,7 @@ public extension HubApi {
 
             // Otherwise, download the file
             // Use file lock to prevent concurrent downloads of the same file
-            let lock = FileLock(path: lockDestination)
+            let lock = await FileLock(lockPath: lockDestination, maxRetries: 600)
             return try await lock.withLock {
                 // Re-check if file exists with valid metadata after acquiring lock
                 // (another process may have completed the download while we waited)
