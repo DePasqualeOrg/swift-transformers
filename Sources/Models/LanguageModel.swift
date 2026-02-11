@@ -422,11 +422,21 @@ public extension LanguageModel {
     var tokenizer: Tokenizer {
         get async throws {
             guard _tokenizer == nil else { return _tokenizer! }
-            guard let tokenizerConfig = try await tokenizerConfig else {
+            guard let configuration else {
                 throw TokenizerError.missingConfig
             }
-            let tokenizerData = try await tokenizerData
-            _tokenizer = try AutoTokenizer.from(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData)
+            guard let tokenizerConfig = try await configuration.tokenizerConfig else {
+                throw TokenizerError.missingConfig
+            }
+            let tokenizerData = try await configuration.tokenizerData
+            let vocab = try await configuration.tokenizerVocab
+            let merges = try await configuration.tokenizerMerges
+            _tokenizer = try await AutoTokenizer.from(
+                tokenizerConfig: tokenizerConfig,
+                tokenizerData: tokenizerData,
+                tokenizerVocab: vocab,
+                tokenizerMerges: merges
+            )
             return _tokenizer!
         }
     }

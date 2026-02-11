@@ -59,57 +59,211 @@ class UnigramTokenizer: PreTrainedTokenizerModel, @unchecked Sendable {
 
     private let trie: Trie<Character>
 
-    /// Initializes a Unigram tokenizer from configuration data.
+    // MARK: - Static Builder Methods
+
+    /// Parses raw JSON vocab data into SentencePieceToken array.
+    ///
+    /// - Parameter rawVocab: Array of [token, score] pairs from JSON
+    /// - Returns: Parsed vocabulary array
+    static func buildVocab(from rawVocab: [[Any]]) -> [SentencePieceToken] {
+        rawVocab.compactMap { pair -> SentencePieceToken? in
+            guard pair.count == 2,
+                let token = pair[0] as? String
+            else { return nil }
+
+            let score: Float
+            if let floatScore = pair[1] as? Double {
+                score = Float(floatScore)
+            } else if let intScore = pair[1] as? Int {
+                score = Float(intScore)
+            } else {
+                return nil
+            }
+
+            return SentencePieceToken(token: token, score: score)
+        }
+    }
+
+    /// Builds the token-to-ID mapping dictionary from a vocab array.
+    ///
+    /// - Parameter vocab: The parsed vocabulary array
+    /// - Returns: Dictionary mapping token strings (as NSString) to their integer IDs
+    static func buildTokensToIds(from vocab: [SentencePieceToken]) -> [NSString: Int] {
+        Dictionary(
+            uniqueKeysWithValues: vocab.map { $0.token as NSString }.enumerated().map { ($1, $0) }
+        )
+    }
+
+    /// Builds a character trie from the vocabulary for prefix matching.
+    ///
+    /// - Parameter vocab: The parsed vocabulary array
+    /// - Returns: A populated Trie for efficient common-prefix search
+    static func buildTrie(from vocab: [SentencePieceToken]) -> Trie<Character> {
+        let trie = Trie<Character>()
+        trie.append(contentsOf: vocab.map { $0.token })
+        return trie
+    }
+
+    /// Computes the minimum score across all tokens in the vocabulary.
+    ///
+    /// - Parameter vocab: The parsed vocabulary array
+    /// - Returns: The minimum score value
+    static func computeMinScore(from vocab: [SentencePieceToken]) -> Float {
+        vocab.reduce(999) { partial, token in
+            min(partial, token.score)
+        }
+    }
+
+    // MARK: - Private Designated Initializer
+
+    /// Initializer accepting pre-built data structures.
+    /// All other initializers and the async factory delegate to this one.
+    private init(
+        vocab: [SentencePieceToken],
+        tokensToIds: [NSString: Int],
+        trie: Trie<Character>,
+        minScore: Float,
+        unknownTokenId: Int,
+        tokenizerConfig: Config
+    ) {
+        self.vocab = vocab
+        self.tokensToIds = tokensToIds
+        self.trie = trie
+        self.minScore = minScore
+        self.unknownTokenId = unknownTokenId
+        self.unknownPiece = SentencePieceToken(
+            token: vocab[unknownTokenId].token,
+            score: minScore - 10
+        )
+
+        // bosToken is hardcoded as " " for Unigram tokenizers
+        self.bosTokenId = tokensToIds[" " as NSString]
+
+        let eos = tokenizerConfig.eosToken.string()
+        self.eosToken = eos
+        if let eos {
+            self.eosTokenId = tokensToIds[eos as NSString]
+        } else {
+            self.eosTokenId = nil
+        }
+    }
+
+    // MARK: - Protocol Conformance Init
+
+    /// Initializes a Unigram tokenizer from configuration data with optional pre-extracted vocab.
+    ///
+    /// When vocab is provided (fast path), builds data structures from raw arrays.
+    /// Otherwise falls back to parsing from Config.
     ///
     /// - Parameters:
     ///   - tokenizerConfig: The tokenizer configuration
     ///   - tokenizerData: The tokenizer data containing vocabulary and scores
     ///   - addedTokens: Additional tokens to include in the vocabulary
+    ///   - vocab: Pre-extracted vocabulary (nil to parse from Config)
+    ///   - merges: Pre-extracted merge rules (unused by Unigram)
     /// - Throws: `TokenizerError` if the vocabulary is missing or malformed
-    required init(tokenizerConfig: Config, tokenizerData: Config, addedTokens: [String: Int]) throws {
-        guard let configVocab = tokenizerData.model.vocab.array() else {
-            throw TokenizerError.missingVocab
-        }
+    required convenience init(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        addedTokens: [String: Int],
+        vocab: TokenizerVocab? = nil,
+        merges: TokenizerMerges? = nil
+    ) throws {
+        let vocabArray: [SentencePieceToken]
 
-        vocab = try configVocab.map { piece in
-            let tuple = piece.array(or: [])
-
-            guard let token = tuple.first?.string(),
-                let scoreValue = tuple.last
-            else {
-                throw TokenizerError.malformedVocab
+        if case .unigram(let rawVocabArray) = vocab, let rawVocab = rawVocabArray as? [[Any]] {
+            // Fast path: build from pre-extracted raw data
+            vocabArray = Self.buildVocab(from: rawVocab)
+        } else {
+            // Fallback: parse from Config
+            guard let configVocab = tokenizerData.model.vocab.array() else {
+                throw TokenizerError.missingVocab
             }
 
-            let score: Float
-            if let floatScore = scoreValue.floating() {
-                score = floatScore
-            } else if let numberScore = scoreValue.integer() {
-                score = Float(numberScore)
+            vocabArray = try configVocab.map { piece -> SentencePieceToken in
+                let tuple = piece.array(or: [])
 
-            } else {
-                throw TokenizerError.malformedVocab
+                guard let token = tuple.first?.string(),
+                    let scoreValue = tuple.last
+                else {
+                    throw TokenizerError.malformedVocab
+                }
+
+                let score: Float
+                if let floatScore = scoreValue.floating() {
+                    score = floatScore
+                } else if let numberScore = scoreValue.integer() {
+                    score = Float(numberScore)
+                } else {
+                    throw TokenizerError.malformedVocab
+                }
+
+                return SentencePieceToken(token: token, score: score)
             }
-
-            return SentencePieceToken(token: token, score: score)
         }
 
-        minScore = vocab.reduce(999) { partial, token in
-            min(partial, token.score)
+        guard let unknownTokenId = tokenizerData.model["unkId"].integer() else {
+            throw TokenizerError.malformedVocab
         }
 
-        guard let unknownTokenId = tokenizerData.model["unkId"].integer() else { throw TokenizerError.malformedVocab }
-        self.unknownTokenId = unknownTokenId
-        unknownPiece = SentencePieceToken(token: vocab[unknownTokenId].token, score: minScore - 10)
-
-        tokensToIds = Dictionary(uniqueKeysWithValues: vocab.map { $0.token as NSString }.enumerated().map { ($1, $0) })
-        bosTokenId = tokensToIds[bosToken! as NSString] // May be nil
-
-        eosToken = tokenizerConfig.eosToken.string()
-        eosTokenId = eosToken == nil ? nil : tokensToIds[eosToken! as NSString]
-
-        trie = Trie()
-        trie.append(contentsOf: vocab.map { $0.token })
+        self.init(
+            vocab: vocabArray,
+            tokensToIds: Self.buildTokensToIds(from: vocabArray),
+            trie: Self.buildTrie(from: vocabArray),
+            minScore: Self.computeMinScore(from: vocabArray),
+            unknownTokenId: unknownTokenId,
+            tokenizerConfig: tokenizerConfig
+        )
     }
+
+    // MARK: - Async Factory
+
+    /// Async factory that builds data structures in parallel for faster loading.
+    ///
+    /// Phase 1: Parse raw vocab array into [SentencePieceToken] (sequential, since later
+    ///          phases all depend on the parsed vocab).
+    /// Phase 2: Build tokensToIds, trie, and computeMinScore in parallel (independent).
+    ///
+    /// - Parameters:
+    ///   - tokenizerConfig: The tokenizer configuration
+    ///   - tokenizerData: The tokenizer data (used for unkId)
+    ///   - rawVocab: Raw vocab array of [token, score] pairs
+    ///   - addedTokens: Additional tokens to include in the vocabulary
+    /// - Returns: A fully initialized UnigramTokenizer
+    /// - Throws: `TokenizerError` if the vocabulary is malformed
+    static func create(
+        tokenizerConfig: Config,
+        tokenizerData: Config,
+        rawVocab: [[Any]],
+        addedTokens: [String: Int]
+    ) async throws -> UnigramTokenizer {
+        guard let unknownTokenId = tokenizerData.model["unkId"].integer() else {
+            throw TokenizerError.malformedVocab
+        }
+
+        // Phase 1: Parse raw vocab (sequential, all other phases depend on this)
+        let vocabArray = buildVocab(from: rawVocab)
+
+        // Phase 2: Build independent data structures in parallel
+        async let tokensToIdsTask = buildTokensToIds(from: vocabArray)
+        async let trieTask = buildTrie(from: vocabArray)
+        async let minScoreTask = computeMinScore(from: vocabArray)
+
+        let tokensToIds = await tokensToIdsTask
+        let trie = await trieTask
+        let minScore = await minScoreTask
+
+        return UnigramTokenizer(
+            vocab: vocabArray,
+            tokensToIds: tokensToIds,
+            trie: trie,
+            minScore: minScore,
+            unknownTokenId: unknownTokenId,
+            tokenizerConfig: tokenizerConfig
+        )
+    }
+
+    // MARK: - Token Conversion
 
     /// Converts a token string to its corresponding numeric ID.
     ///
@@ -126,6 +280,8 @@ class UnigramTokenizer: PreTrainedTokenizerModel, @unchecked Sendable {
     func convertIdToToken(_ id: Int) -> String? {
         vocab[id].token
     }
+
+    // MARK: - Tokenization
 
     /// Tokenizes input text using the Unigram algorithm with dynamic programming.
     ///

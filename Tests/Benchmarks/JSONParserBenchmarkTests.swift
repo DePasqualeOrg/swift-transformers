@@ -268,6 +268,11 @@ struct JSONParserBenchmarkTests {
         let tokenizerConfigParsed = try JSONSerialization.jsonObject(with: tokenizerConfigRaw, options: []) as! [NSString: Any]
         let tokenizerConfig = Config(tokenizerConfigParsed)
 
-        return try AutoTokenizer.from(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData)
+        return try await AutoTokenizer.from(
+            tokenizerConfig: tokenizerConfig,
+            tokenizerData: tokenizerData,
+            tokenizerVocab: nil,
+            tokenizerMerges: nil
+        )
     }
 }

@@ -61,12 +61,7 @@ private func loadEdgeCases(for hubModelName: String) throws -> [EdgeCase]? {
 }
 
 private func makeTokenizer(hubModelName: String, hubApi: HubApi) async throws -> PreTrainedTokenizer {
-    let config = LanguageModelConfigurationFromHub(modelName: hubModelName, hubApi: hubApi)
-    guard let tokenizerConfig = try await config.tokenizerConfig else {
-        throw TokenizerError.missingConfig
-    }
-    let tokenizerData = try await config.tokenizerData
-    let tokenizer = try AutoTokenizer.from(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData)
+    let tokenizer = try await AutoTokenizer.from(pretrained: hubModelName, hubApi: hubApi)
     guard let pretrained = tokenizer as? PreTrainedTokenizer else {
         throw TestError.unsupportedTokenizer
     }
@@ -194,16 +189,8 @@ struct TokenizerTests {
             return
         }
 
-        let configuration = LanguageModelConfigurationFromHub(modelFolder: tokenizerConfigURL.deletingLastPathComponent())
-
-        let tokenizerConfigOpt = try await configuration.tokenizerConfig
-        #expect(tokenizerConfigOpt != nil)
-        let tokenizerConfig = tokenizerConfigOpt!
-        let tokenizerData = try await configuration.tokenizerData
-
-        let tokenizer = try AutoTokenizer.from(
-            tokenizerConfig: tokenizerConfig,
-            tokenizerData: tokenizerData
+        let tokenizer = try await AutoTokenizer.from(
+            modelFolder: tokenizerConfigURL.deletingLastPathComponent()
         )
 
         let encoded = tokenizer.encode(text: "offline path")
@@ -370,5 +357,49 @@ struct TokenizerTests {
         let tokenizer = tokenizerOpt!
 
         #expect(tokenizer.encode(text: "She took a train to the West") == [6284, 5244, 1261, 10018, 1317, 1278, 5046])
+    }
+
+    @Test
+    func concurrentTokenizerRegistration() async throws {
+        // Test that concurrent registration doesn't cause crashes or data races.
+        // This validates the thread-safety of AutoTokenizer.register().
+
+        final class MockTokenizer: PreTrainedTokenizerModel, @unchecked Sendable {
+            let bosToken: String? = nil
+            let bosTokenId: Int? = nil
+            let eosToken: String? = nil
+            let eosTokenId: Int? = nil
+            let unknownToken: String? = nil
+            let unknownTokenId: Int? = nil
+            var fuseUnknownTokens: Bool { false }
+
+            required init(
+                tokenizerConfig: Config, tokenizerData: Config, addedTokens: [String: Int],
+                vocab: TokenizerVocab? = nil, merges: TokenizerMerges? = nil
+            ) throws {}
+            func tokenize(text: String) -> [String] { [] }
+            func convertTokenToId(_ token: String) -> Int? { nil }
+            func convertIdToToken(_ id: Int) -> String? { nil }
+            func encode(text: String) -> [Int] { [] }
+            func decode(tokens: [Int]) -> String { "" }
+        }
+
+        // Register from multiple concurrent tasks
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<100 {
+                group.addTask {
+                    AutoTokenizer.register(MockTokenizer.self, for: "ConcurrentTestTokenizer\(i)")
+                }
+            }
+        }
+
+        // Verify registrations succeeded by checking we can look them up
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<100 {
+                group.addTask {
+                    _ = TokenizerModel.tokenizerClass(for: "ConcurrentTestTokenizer\(i)")
+                }
+            }
+        }
     }
 }

@@ -70,6 +70,112 @@ enum YYJSONParser {
         }
     }
 
+    /// Parses JSON data into an NSDictionary using yyjson.
+    ///
+    /// Returns Foundation objects (NSDictionary, NSArray, NSString, NSNumber, NSNull)
+    /// instead of Config, preserving raw types for direct use in tokenizer initialization.
+    ///
+    /// - Parameter data: The JSON data to parse
+    /// - Returns: An NSDictionary
+    /// - Throws: ParseError if parsing fails
+    static func parseToNSDictionary(_ data: Data) throws -> NSDictionary {
+        guard !data.isEmpty else {
+            throw ParseError.readFailed(code: 0, message: "empty data", position: 0)
+        }
+
+        return try data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) -> NSDictionary in
+            guard let baseAddress = buffer.baseAddress else {
+                throw ParseError.readFailed(code: 0, message: "empty buffer", position: 0)
+            }
+
+            var err = yyjson_read_err()
+            let doc = yyjson_read_opts(
+                UnsafeMutableRawPointer(mutating: baseAddress).assumingMemoryBound(to: CChar.self),
+                buffer.count,
+                0,
+                nil,
+                &err
+            )
+
+            guard let doc else {
+                let message = err.msg.map { String(cString: $0) } ?? "unknown error"
+                throw ParseError.readFailed(code: err.code, message: message, position: err.pos)
+            }
+
+            defer { yyjson_doc_free(doc) }
+
+            guard let root = yyjson_doc_get_root(doc) else {
+                throw ParseError.nullDocument
+            }
+
+            guard let result = convertToFoundation(root) as? NSDictionary else {
+                throw ParseError.nullDocument
+            }
+
+            return result
+        }
+    }
+
+    // MARK: - Foundation object conversion
+
+    private static func convertToFoundation(_ val: UnsafeMutablePointer<yyjson_val>) -> Any {
+        if yyjson_is_null(val) {
+            return NSNull()
+        } else if yyjson_is_bool(val) {
+            return NSNumber(value: yyjson_get_bool(val))
+        } else if yyjson_is_uint(val) {
+            return NSNumber(value: yyjson_get_uint(val))
+        } else if yyjson_is_sint(val) {
+            return NSNumber(value: yyjson_get_sint(val))
+        } else if yyjson_is_real(val) {
+            return NSNumber(value: yyjson_get_real(val))
+        } else if yyjson_is_str(val) {
+            guard let str = yyjson_get_str(val) else { return "" as NSString }
+            return String(cString: str) as NSString
+        } else if yyjson_is_arr(val) {
+            return convertArrayToFoundation(val)
+        } else if yyjson_is_obj(val) {
+            return convertObjectToFoundation(val)
+        } else {
+            return NSNull()
+        }
+    }
+
+    private static func convertObjectToFoundation(_ obj: UnsafeMutablePointer<yyjson_val>) -> NSDictionary {
+        let size = yyjson_obj_size(obj)
+        let result = NSMutableDictionary(capacity: Int(size))
+
+        var iter = yyjson_obj_iter()
+        yyjson_obj_iter_init(obj, &iter)
+
+        while let key = yyjson_obj_iter_next(&iter) {
+            guard let keyPtr = yyjson_get_str(key),
+                let val = yyjson_obj_iter_get_val(key)
+            else {
+                continue
+            }
+
+            let keyString = String(cString: keyPtr) as NSString
+            result[keyString] = convertToFoundation(val)
+        }
+
+        return result
+    }
+
+    private static func convertArrayToFoundation(_ arr: UnsafeMutablePointer<yyjson_val>) -> NSArray {
+        let size = yyjson_arr_size(arr)
+        let result = NSMutableArray(capacity: Int(size))
+
+        var iter = yyjson_arr_iter()
+        yyjson_arr_iter_init(arr, &iter)
+
+        while let val = yyjson_arr_iter_next(&iter) {
+            result.add(convertToFoundation(val))
+        }
+
+        return result
+    }
+
     // MARK: - Direct Config conversion
 
     private static func convertToConfig(_ val: UnsafeMutablePointer<yyjson_val>) -> Config {
