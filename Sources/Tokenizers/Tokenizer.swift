@@ -1011,3 +1011,11 @@ class LlamaPreTrainedTokenizer: PreTrainedTokenizer, @unchecked Sendable {
         return tokens
     }
 }
+
+#if !canImport(Darwin)
+fileprivate extension String {
+    init(localized key: String) {
+        self = key
+    }
+}
+#endif

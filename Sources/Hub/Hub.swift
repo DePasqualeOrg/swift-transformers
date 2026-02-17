@@ -317,10 +317,41 @@ public final class LanguageModelConfigurationFromHub: Sendable {
     }
 
     static func fallbackTokenizerConfig(for modelType: String) -> Config? {
-        // Fallback tokenizer configuration files are located in the `Sources/Hub/Resources` directory
-        guard let url = Bundle.module.url(forResource: "\(modelType)_tokenizer_config", withExtension: "json") else {
+        let allowedModelTypeScalars = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-"))
+        guard !modelType.isEmpty, modelType.unicodeScalars.allSatisfy(allowedModelTypeScalars.contains) else {
             return nil
         }
+        let fallbackTokenizerConfigBaseName = "\(modelType)_tokenizer_config"
+
+        // Fallback tokenizer configuration files are located in the `Sources/Hub/Resources` directory
+        // On Linux, Bundle.module may not be available if resources aren't properly bundled
+        #if canImport(Darwin)
+        guard let url = Bundle.module.url(forResource: fallbackTokenizerConfigBaseName, withExtension: "json") else {
+            return nil
+        }
+        #else
+        let fileName = "\(fallbackTokenizerConfigBaseName).json"
+        // On non-Darwin platforms, also try to locate resources relative to the executable
+        var possiblePaths: [URL] = []
+        if let executableDirectoryURL = Bundle.main.executableURL?.deletingLastPathComponent() {
+            possiblePaths = [
+                executableDirectoryURL
+                    .appendingPathComponent("swift-transformers_Hub.resources", isDirectory: true)
+                    .appendingPathComponent(fileName, isDirectory: false),
+
+                executableDirectoryURL
+                    .appendingPathComponent("swift-transformers_Hub.resources", isDirectory: true)
+                    .appendingPathComponent("Contents", isDirectory: true)
+                    .appendingPathComponent("Resources", isDirectory: true)
+                    .appendingPathComponent("Resources", isDirectory: true)
+                    .appendingPathComponent(fileName, isDirectory: false)
+                    .standardizedFileURL,
+            ]
+        }
+        guard let url = possiblePaths.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+            return nil
+        }
+        #endif
 
         do {
             let data = try Data(contentsOf: url)
@@ -338,3 +369,11 @@ public final class LanguageModelConfigurationFromHub: Sendable {
         }
     }
 }
+
+#if !canImport(Darwin)
+extension String {
+    init(localized key: String) {
+        self = key
+    }
+}
+#endif
