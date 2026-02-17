@@ -120,7 +120,9 @@ class BPETokenizer: PreTrainedTokenizerModel, @unchecked Sendable {
 
     /// Builds idsToTokens dictionary (inverse of tokensToIds).
     static func buildIdsToTokens(from tokensToIds: [NSString: Int]) -> [Int: NSString] {
-        Utils.invert(tokensToIds)
+        tokensToIds.reduce(into: [Int: NSString]()) { result, element in
+            result[element.value] = element.key
+        }
     }
 
     /// Builds a String-keyed fallback dict only when Unicode normalization causes
