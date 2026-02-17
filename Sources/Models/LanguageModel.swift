@@ -417,13 +417,13 @@ public extension LanguageModel {
     /// Lazily loads and caches the tokenizer on first access.
     ///
     /// - Returns: A configured tokenizer instance
-    /// - Throws: `TokenizerError.tokenizerConfigNotFound` if tokenizer configuration is missing,
+    /// - Throws: `TokenizerError.missingConfig` if tokenizer configuration is missing,
     ///           or other errors during tokenizer creation
     var tokenizer: Tokenizer {
         get async throws {
             guard _tokenizer == nil else { return _tokenizer! }
             guard let tokenizerConfig = try await tokenizerConfig else {
-                throw TokenizerError.tokenizerConfigNotFound
+                throw TokenizerError.missingConfig
             }
             let tokenizerData = try await tokenizerData
             _tokenizer = try AutoTokenizer.from(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData)
@@ -559,23 +559,6 @@ public class LanguageModelWithStatefulKVCache: LanguageModel {
         assert(nextTokenScores.rank == 3)
         assert(nextTokenScores.shape[0] == 1 && nextTokenScores.shape[1] == 1)
         return nextTokenScores
-    }
-}
-
-/// Errors that can occur during tokenizer operations in language models.
-public enum TokenizerError: LocalizedError {
-    /// The tokenizer configuration file could not be found.
-    case tokenizerConfigNotFound
-    /// The language model configuration required to load tokenizer data is missing.
-    case missingConfig
-
-    public var errorDescription: String? {
-        switch self {
-        case .tokenizerConfigNotFound:
-            String(localized: "Tokenizer configuration could not be found. The model may be missing required tokenizer files.", comment: "Error when tokenizer configuration is missing")
-        case .missingConfig:
-            String(localized: "Language model configuration was not set, tokenizer assets could not be loaded.", comment: "Error when configuration needed for tokenizer data is missing")
-        }
     }
 }
 

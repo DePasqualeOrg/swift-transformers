@@ -321,13 +321,13 @@ public extension HubApi {
         public var errorDescription: String? {
             switch self {
             case let .invalidMetadataError(message):
-                String(localized: "Invalid metadata: \(message)")
+                "Invalid metadata: \(message)"
             case let .offlineModeError(message):
-                String(localized: "Offline mode error: \(message)")
+                "Offline mode error: \(message)"
             case let .fileIntegrityError(message):
-                String(localized: "File integrity check failed: \(message)")
+                "File integrity check failed: \(message)"
             case let .fileWriteError(message):
-                String(localized: "Failed to write file: \(message)")
+                "Failed to write file: \(message)"
             }
         }
     }

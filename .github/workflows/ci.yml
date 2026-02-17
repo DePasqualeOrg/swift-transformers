@@ -43,7 +43,12 @@ jobs:
               env:
                   CI_DISABLE_NETWORK_MONITOR: "1"
                   HF_TOKEN: ${{ secrets.HF_HUB_READ_TOKEN }}
-              run: swift test
+              # Skip test targets that use URLSession on Linux:
+              # FoundationNetworking has a race condition where curl EasyHandles
+              # can be freed while still in use during URLSession teardown,
+              # causing a crash (libcurl error 43). These tests run on macOS.
+              # See: https://github.com/swiftlang/swift-corelibs-foundation/issues/3675
+              run: swift test --skip HubTests --skip TokenizersTests --skip Benchmarks
 
     lint:
         name: Lint
