@@ -63,7 +63,7 @@ private func loadEdgeCases(for hubModelName: String) throws -> [EdgeCase]? {
 private func makeTokenizer(hubModelName: String, hubApi: HubApi) async throws -> PreTrainedTokenizer {
     let config = LanguageModelConfigurationFromHub(modelName: hubModelName, hubApi: hubApi)
     guard let tokenizerConfig = try await config.tokenizerConfig else {
-        throw TokenizerError.tokenizerConfigNotFound
+        throw TokenizerError.missingConfig
     }
     let tokenizerData = try await config.tokenizerData
     let tokenizer = try AutoTokenizer.from(tokenizerConfig: tokenizerConfig, tokenizerData: tokenizerData)
