@@ -1,8 +1,4 @@
-//
-//  DecoderTests.swift
-//
-//  Created by Pedro Cuenca on 20231123.
-//
+// Copyright © Hugging Face SAS
 
 import Foundation
 import Hub

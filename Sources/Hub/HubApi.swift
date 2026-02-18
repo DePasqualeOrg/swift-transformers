@@ -1,9 +1,4 @@
-//
-//  HubApi.swift
-//
-//
-//  Created by Pedro Cuenca on 20231230.
-//
+// Copyright © Hugging Face SAS
 
 import Crypto
 import Foundation

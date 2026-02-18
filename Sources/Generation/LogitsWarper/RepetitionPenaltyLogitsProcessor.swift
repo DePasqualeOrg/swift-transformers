@@ -1,3 +1,5 @@
+// Copyright © Hugging Face SAS
+
 #if canImport(CoreML)
 import CoreML
 

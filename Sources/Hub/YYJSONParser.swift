@@ -1,9 +1,5 @@
-//
-//  YYJSONParser.swift
-//  swift-transformers
-//
-//  High-performance JSON parsing using yyjson.
-//
+// Copyright © Hugging Face SAS
+// Copyright © Anthony DePasquale
 
 import Foundation
 import yyjson

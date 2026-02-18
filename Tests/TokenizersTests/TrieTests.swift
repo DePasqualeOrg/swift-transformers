@@ -1,9 +1,4 @@
-//
-//  TrieTests.swift
-//
-//
-//  Created by Pedro Cuenca on 12/1/24.
-//
+// Copyright © Hugging Face SAS
 
 import Foundation
 import Testing

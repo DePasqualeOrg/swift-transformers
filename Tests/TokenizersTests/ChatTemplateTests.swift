@@ -1,9 +1,4 @@
-//
-//  ChatTemplateTests.swift
-//  swift-transformers
-//
-//  Created by Anthony DePasquale on 2/10/24.
-//
+// Copyright © Hugging Face SAS
 
 import Foundation
 import Testing

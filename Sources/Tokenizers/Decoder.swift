@@ -1,9 +1,4 @@
-//
-//  Decoder.swift
-//
-//
-//  Created by Pedro Cuenca on 17/7/23.
-//
+// Copyright © Hugging Face SAS
 
 import Foundation
 import Hub

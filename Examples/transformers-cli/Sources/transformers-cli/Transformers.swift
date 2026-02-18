@@ -1,3 +1,5 @@
+// Copyright © Hugging Face SAS
+
 import ArgumentParser
 import CoreML
 import Foundation

@@ -1,8 +1,4 @@
-//
-//  HubTests.swift
-//
-//  Created by Pedro Cuenca on 18/05/2023.
-//
+// Copyright © Hugging Face SAS
 
 import XCTest
 

@@ -1,10 +1,4 @@
-//
-//  Trie.swift
-//
-//
-//  Created by Pedro Cuenca on 20240112.
-//  Copyright © 2024 Hugging Face. All rights reserved.
-//
+// Copyright © Hugging Face SAS
 
 import Foundation
 

@@ -1,9 +1,4 @@
-//
-//  PreTokenizer.swift
-//
-//
-//  Created by Pedro Cuenca on 18/7/23.
-//
+// Copyright © Hugging Face SAS
 
 import Foundation
 import Hub

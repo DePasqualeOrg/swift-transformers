@@ -1,9 +1,5 @@
-//
-//  YYJSONParserTests.swift
-//  swift-transformers
-//
-//  Tests for YYJSONParser functionality.
-//
+// Copyright © Hugging Face SAS
+// Copyright © Anthony DePasquale
 
 import Foundation
 import Testing

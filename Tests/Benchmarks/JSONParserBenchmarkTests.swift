@@ -1,9 +1,5 @@
-//
-//  JSONParserBenchmarkTests.swift
-//  swift-transformers
-//
-//  Benchmark tests comparing JSONSerialization vs yyjson performance.
-//
+// Copyright © Hugging Face SAS
+// Copyright © Anthony DePasquale
 
 import Dispatch
 import Foundation

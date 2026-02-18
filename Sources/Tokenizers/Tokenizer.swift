@@ -1,9 +1,4 @@
-//
-//  Tokenizer.swift
-//
-//
-//  Created by Pedro Cuenca on 6/5/23.
-//
+// Copyright © Hugging Face SAS
 
 import Foundation
 import Hub

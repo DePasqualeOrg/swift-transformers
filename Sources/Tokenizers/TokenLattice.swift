@@ -1,10 +1,4 @@
-//
-//  TokenLattice.swift
-//
-//
-//  Created by Pedro Cuenca on 20240117.
-//  Copyright © 2024 Hugging Face. All rights reserved.
-//
+// Copyright © Hugging Face SAS
 
 /// Implements a TokenLattice to implement the Viterbi algorithm
 /// We could make it generic so TokenLatticeNode stores an opaque type, but it's overkill right now.

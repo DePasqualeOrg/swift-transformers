@@ -1,8 +1,4 @@
-//
-//  PreTokenizerTests.swift
-//
-//  Created by Jan Krukowski on 23/11/2023.
-//
+// Copyright © Hugging Face SAS
 
 import Foundation
 import Hub

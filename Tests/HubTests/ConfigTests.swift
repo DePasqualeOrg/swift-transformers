@@ -1,9 +1,4 @@
-//
-//  ConfigTests.swift
-//  swift-transformers
-//
-//  Created by Piotr Kowalczuk on 13.03.25.
-//
+// Copyright © Hugging Face SAS
 
 import Foundation
 import Jinja

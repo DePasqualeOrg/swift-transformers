@@ -1,10 +1,4 @@
-//
-//  BertTokenizerTests.swift
-//  CoreMLBertTests
-//
-//  Created by Julien Chaumond on 27/06/2019.
-//  Copyright © 2019 Hugging Face. All rights reserved.
-//
+// Copyright © Hugging Face SAS
 
 import Foundation
 import Testing

@@ -1,9 +1,4 @@
-//
-//  LanguageModelTypes.swift
-//
-//
-//  Created by Pedro Cuenca on 8/5/23.
-//
+// Copyright © Hugging Face SAS
 
 #if canImport(CoreML)
 import CoreML

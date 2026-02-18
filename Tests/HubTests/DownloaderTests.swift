@@ -1,9 +1,4 @@
-//
-//  DownloaderTests.swift
-//  swift-transformers
-//
-//  Created by Arda Atahan Ibis on 1/28/25.
-//
+// Copyright © Hugging Face SAS
 
 import XCTest
 

@@ -1,9 +1,4 @@
-//
-//  BinaryDistinct.swift
-//  swift-transformers
-//
-//  Created by Piotr Kowalczuk on 06.03.25.
-//
+// Copyright © Hugging Face SAS
 
 import Foundation
 
